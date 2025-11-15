@@ -1,0 +1,127 @@
+-- %% MD | unnamed
+# An Introduction to DuckDB
+-- %% MD | unnamed
+## DuckDB deployment options and installation
+-- %% MD | unnamed
+### Installing the DuckDB CLI
+-- %% MD | unnamed
+Linux/MacOS Bash Command for installing DuckDB CLI
+-- %% TEXT | unnamed
+curl https://install.duckdb.org | sh
+-- %% MD | unnamed
+Windows PowerShell/DOS Command for installing DuckDB CLI
+-- %% TEXT | unnamed
+winget install DuckDB.cli
+-- %% MD | unnamed
+- Note: Note that DuckDB on Windows requires the Micrsoft Visuall C++ Redistributable.
+-- %% MD | unnamed
+### Starting the DuckDB CLI
+-- %% MD | unnamed
+Windows/Linux/MacOS - If you installed DuckDB using a package manager:
+-- %% TEXT | unnamed
+duckdb
+-- %% MD | unnamed
+Windows - If you downloaded the executable (Portable version) and are using PowerShell
+-- %% TEXT | unnamed
+.\duckdb
+-- %% MD | unnamed
+MacOS and Linux - If you downloaded the executable (Portable version) directly
+-- %% TEXT | unnamed
+./duckdb
+-- %% MD | unnamed
+Ensure to create a ducklab folder in Temp/tmp folder before running SQL cell in .isql file
+-- %% MD | unnamed
+Linux / macOS (bash):
+
+-- %% TEXT | unnamed
+mkdir -p /tmp/ducklab
+-- %% MD | unnamed
+Windows (PowerShell):
+-- %% TEXT | unnamed
+New-Item -Path 'C:\temp\ducklab' -ItemType Directory -Force
+-- %% MD | unnamed
+### Working with the DuckDB CLI
+-- %% SQL_RAW | unnamed
+SELECT 'hello' AS greeting, 'world' AS name;
+-- %% MD | unnamed
+DuckDB CLI supports 2 ways for opening a database as a persistent disk-based file.
+-- %% TEXT | unnamed
+duckdb my_db.duckdb #1
+-- %% TEXT | unnamed
+duckdb
+.open my_db.duckdb #2
+-- %% MD | unnamed
+Use .mode command to change the format of the output into HTML, Markdown, JSON, line, list etc.
+-- %% TEXT | unnamed
+.mode html
+-- %% SQL_RAW | unnamed
+SELECT 'hello' AS greeting, 'world' AS name;
+-- %% TEXT | unnamed
+.exit
+-- %% TEXT | unnamed
+duckdb -markdown -s "SELECT 'hello' AS greeting, 'world' AS name;"
+-- %% TEXT | unnamed
+duckdb --help
+-- %% MD | unnamed
+## A Short SQL Primer
+-- %% MD | unnamed
+### Creating your first DuckDB table
+-- %% MD | unnamed
+#### Create a Table
+-- %% SQL_RAW | unnamed
+DROP TABLE IF EXISTS foods;
+
+CREATE TABLE foods (
+  food_name VARCHAR PRIMARY KEY, 
+  color VARCHAR,
+  calories INT, 
+  is_healthy BOOLEAN);
+-- %% MD | unnamed
+#### Insert a Record into a Table
+-- %% SQL_RAW | unnamed
+INSERT INTO foods (food_name, color, calories, is_healthy) 
+VALUES ('apple', 'red', 100, true);
+-- %% MD | unnamed
+#### Insert multiple Records into a Table
+-- %% SQL_RAW | unnamed
+INSERT INTO foods (food_name, color, calories, is_healthy) 
+VALUES ('banana', 'yellow', 100, true),
+       ('cookie', 'brown', 200, false),
+       ('chocolate', 'brown', 150, false);
+-- %% MD | unnamed
+### Running your first DuckDB query
+-- %% MD | unnamed
+#### Retrieve data from one (or more) tables
+-- %% SQL_RAW | unnamed
+SELECT * FROM foods;
+-- %% MD | unnamed
+#### Alternative method
+-- %% SQL_RAW | unnamed
+FROM foods;
+-- %% MD | unnamed
+#### Primary Key Constraint
+-- %% SQL_RAW | unnamed
+INSERT INTO foods (food_name, color, calories, is_healthy) 
+VALUES ('apple', 'green', 100, true);
+-- %% MD | unnamed
+Retrieve specific columns from a Table and apply filter
+-- %% SQL_RAW | unnamed
+SELECT food_name, color 
+FROM foods 
+WHERE food_name = 'apple';
+-- %% MD | unnamed
+#### Update a record
+-- %% SQL_RAW | unnamed
+UPDATE foods 
+SET color = 'green' 
+WHERE food_name = 'apple';
+-- %% SQL_RAW | unnamed
+SELECT food_name, color 
+FROM foods 
+WHERE food_name = 'apple';
+-- %% MD | unnamed
+#### Alternative method
+-- %% SQL_RAW | unnamed
+FROM foods 
+SELECT food_name, color 
+WHERE food_name = 'apple';

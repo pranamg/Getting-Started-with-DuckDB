@@ -1,0 +1,357 @@
+-- %% MD | unnamed
+# Loading Data into DuckDB
+-- %% MD | unnamed
+- Ensure this folder exists before running cells in .isql file 
+-- %% TEXT | unnamed
+mkdir -p /tmp/ducklab
+-- %% TEXT | unnamed
+duckdb
+-- %% MD | unnamed
+## Loading CSV files
+-- %% MD | unnamed
+### The COPY statement
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE foods (
+  food_name VARCHAR PRIMARY KEY, 
+  color VARCHAR,
+  calories INT, 
+  is_healthy BOOLEAN
+);
+-- %% SQL_RAW | unnamed
+COPY foods FROM './chapter_02/foods_no_heading.csv';
+-- %% SQL_RAW | unnamed
+FROM foods;
+-- %% TEXT | unnamed
+-- DuckDB 1.4.0 command to directly query csv/parquet/json files from commandline without creating a DB. 
+-- Ensure that the table name matches the file name without extension.
+-- Here the file is foods_no_heading.csv so the table name is foods_no_heading
+duckdb './chapter_02/foods_no_heading.csv' -c 'FROM foods_no_heading;'
+-- %% MD | unnamed
+Load a csv file and filter a INT column
+-- %% TEXT | unnamed
+duckdb './chapter_02/foods_no_heading.csv' -c 'FROM foods_no_heading WHERE column2=100;'
+-- %% MD | unnamed
+Load a csv file and filter a Boolean column
+-- %% TEXT | unnamed
+duckdb './chapter_02/foods_no_heading.csv' -c 'FROM foods_no_heading WHERE column3=true;'
+-- %% MD | unnamed
+### COPY Statement Options
+-- %% MD | unnamed
+To import data into an existing table from a Tab separated values (TSV) file with 1st line as headers, and columns not in the same order as the existing table you wil have to specify this in the parameters.
+-- %% SQL_RAW | unnamed
+COPY foods (food_name, is_healthy, color, calories)  
+FROM './chapter_02/foods_with_heading.tsv' (DELIM '\t', HEADER);
+-- %% SQL_RAW | unnamed
+FROM foods;
+-- %% MD | unnamed
+See DuckDB's CSV reader documentation for a complete list of available parameters: https://duckdb.org/docs/data/csv/overview.html
+-- %% MD | unnamed
+DuckDB 1.4.0 alternative from commandline
+-- %% TEXT | unnamed
+duckdb './chapter_02/foods_with_heading.ts
+v' -c 'FROM foods_with_heading;'
+-- %% MD | unnamed
+### Error handling with CSV reading
+-- %% SQL_RAW | unnamed
+COPY foods from './chapter_02/foods_error.csv';
+-- %% SQL_RAW | unnamed
+COPY foods from './chapter_02/foods_error.csv' (IGNORE_ERRORS true);
+-- %% MD | unnamed
+Sometimes, it's important to log information about parsing errors for later inspection. the REJECT_SCANS and REJECT_ERRORS parameter instruct the CSV reader to store diagnostic information in persistant tables. See the documentation for more details: https://duckdb.org/docs/data/csv/reading_faulty_csv_files.
+-- %% MD | unnamed
+### File loading with read_csv
+-- %% SQL_RAW | unnamed
+SELECT * FROM read_csv('./chapter_02/food_prices.csv');
+-- %% SQL_RAW | unnamed
+SELECT Delimiter, HasHeader, Columns
+FROM sniff_csv('./chapter_02/food_prices.csv');
+-- %% SQL_RAW | unnamed
+SELECT Prompt
+FROM sniff_csv('./chapter_02/food_prices.csv');
+-- %% SQL_RAW | unnamed
+DESCRIBE SELECT * 
+FROM read_csv('./chapter_02/food_prices.csv');
+-- %% MD | unnamed
+### Table creation with read_csv
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE low_cost_foods 
+AS
+SELECT * 
+FROM read_csv('./chapter_02/food_prices.csv') 
+WHERE price < 4.00;
+-- %% MD | unnamed
+Shorter Alternative
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE low_cost_foods_v2 
+AS
+FROM './chapter_02/food_prices.csv' 
+WHERE price < 4.00;
+-- %% SQL_RAW | unnamed
+SELECT * 
+FROM low_cost_foods;
+-- %% MD | unnamed
+Direct CLI Alternative
+-- %% TEXT | unnamed
+duckdb './chapter_02/food_prices.csv' -c 'FROM food_prices WHERE price < 4.00;'
+-- %% MD | unnamed
+### Date formats
+-- %% SQL_RAW | unnamed
+SELECT * 
+FROM read_csv('./chapter_02/food_orders.csv');
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM read_csv(
+'./chapter_02/food_orders.csv',
+dateformat='%Y%m%d',
+types={'order_date': 'DATE'}
+);
+-- %% MD | unnamed
+Consult the DuckDB documentation for the complete date formatting specification: https://duckdb.org/docs/sql/functions/dateformat.
+-- %% SQL_RAW | unnamed
+SELECT * 
+FROM read_csv('./chapter_02/food_orders.csv'
+, dateformat='%Y%m%d'
+, columns={
+   'food_name': 'VARCHAR', 
+   'order_date': 'DATE', 
+   'quantity': 'INTEGER'}
+);
+-- %% MD | unnamed
+### When to use COPY versus read_csv
+-- %% MD | unnamed
+- Use read_csv function when performing ad_hoc analysis or **exploratory data analysis (EDA)** over new datasets
+- Use COPY statement to cpoy records from a CSV file into an existing table
+-- %% MD | unnamed
+### Loading multiple files
+-- %% MD | unnamed
+Use file masks (also called glob patterns) such as *, ? to load multiple files or directories based on certain criteria. You can use the filename-true parameter to extend the result schema with an additional **filename** column, which contains the path of the source file that each record originates from.
+-- %% SQL_RAW | unnamed
+SELECT food_name, color, filename   
+FROM read_csv('./chapter_02/food_collection/pizza*.csv', 
+filename=true);
+-- %% MD | unnamed
+### Mixed schemas
+-- %% SQL_RAW | unnamed
+SELECT *  
+FROM read_csv('./chapter_02/food_collection/*.csv');
+-- %% SQL_RAW | unnamed
+SELECT *  
+FROM read_csv('./chapter_02/food_collection/*.csv', 
+union_by_name=true);
+-- %% MD | unnamed
+## Loading JSON files
+-- %% MD | unnamed
+### JSON Lines - Newline Delimited JSON
+-- %% SQL_RAW | unnamed
+SELECT *  
+FROM read_json('./chapter_02/pizza_orders_records.json',  
+format='newline_delimited');
+-- %% MD | unnamed
+Alternative#1 - Shorter
+-- %% SQL_RAW | unnamed
+FROM read_json('./chapter_02/pizza_orders_records.json',  
+format='newline_delimited');
+-- %% MD | unnamed
+Alternative#2 - Supershort
+-- %% SQL_RAW | unnamed
+FROM './chapter_02/pizza_orders_records.json';
+-- %% MD | unnamed
+Alternative#3 - Supershort CLI command
+-- %% TEXT | unnamed
+duckdb './chapter_02/pizza_orders_records.json' -c 'FROM pizza_orders_records;'
+-- %% MD | unnamed
+### JSON array object
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM read_json('./chapter_02/pizza_orders_array_of_records.json',
+format='array');
+-- %% MD | unnamed
+Alternative#1 - Shorter
+-- %% SQL_RAW | unnamed
+FROM read_json('./chapter_02/pizza_orders_array_of_records.json',
+format='array');
+-- %% MD | unnamed
+Alternative#2 - Supershort
+-- %% SQL_RAW | unnamed
+FROM './chapter_02/pizza_orders_array_of_records.json';
+-- %% MD | unnamed
+Alternative#3 - Supershort CLI command
+-- %% TEXT | unnamed
+duckdb './chapter_02/pizza_orders_array_of_records.json' -c 'FROM pizza_orders_array_of_records;'
+-- %% MD | unnamed
+## Working with Parquet files
+-- %% MD | unnamed
+Parquet files are self-describing in that each file contains both data and metadata describing the schema of the data within the file. This means that column names, their data types, and summary information about the number of rows and columns are encoded with the file.
+-- %% SQL_RAW | unnamed
+SELECT name, type, converted_type
+FROM parquet_schema('./chapter_02/food_orders.parquet');
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM read_parquet('./chapter_02/food_orders.parquet');
+-- %% MD | unnamed
+Alternative#1 - Shorter
+-- %% SQL_RAW | unnamed
+FROM read_parquet('./chapter_02/food_orders.parquet');
+-- %% MD | unnamed
+Alternative#2 - Supershort
+-- %% SQL_RAW | unnamed
+FROM './chapter_02/food_orders.parquet';
+-- %% MD | unnamed
+Alternative#3 - Supershort CLI command
+-- %% TEXT | unnamed
+duckdb './chapter_02/food_orders.parquet' -c 'FROM food_orders;'
+-- %% SQL_RAW | unnamed
+DESCRIBE
+SELECT *
+FROM read_parquet('./chapter_02/food_orders.parquet');
+-- %% MD | unnamed
+### Best Practice when persisting transformed data as files
+-- %% MD | unnamed
+It is good to get in habit, where possible, of using Parquet for saving transformed data to disk, rather than CSV, JSON or Excel. Parquet files are very efficient for storage, providing a compact way of storing large amount of data with smaller footprints. Furthermore, persisting the schema alongside the data will make your workflows and pipelines more robust.
+-- %% MD | unnamed
+## Exploring public datasets
+-- %% MD | unnamed
+Public datasets are collections of data that are made available to the public by various sources, such as governments, organizations, and researchers. Public datasets can be useful for anlyzing trends and patterns in different domains, such as health, education, environment, or social impact.
+-- %% MD | unnamed
+DuckDB is a powerful tool for exploring, understanding, and gaining insights from public datasets.
+-- %% MD | unnamed
+### Bike-share station readings
+-- %% MD | unnamed
+We will be exploring *Melbourne Bike Share* dataset, which provides historical data from the Melbourne Bike Share service, which operated from 2010 to 2019, and is made available by Melbourne Data, the City of Melbourne's open data platform (https://data.melbourne.vic.gov.au). This dataset contains the locations of bike-share pods and sensor readings corresponding to the number of bikes located in each pod at different times.
+-- %% MD | unnamed
+You can download the zip file containing the csv file from here and unzip it and save it in the current working directory. You should have the file called 74id-aqj9.csv. Once unzipped, this file should be roughly 943 MB in size and will contain around 5.6 million rows. https://opendatasoft-s3.s3.amazonaws.com/downloads/archive/74id-aqj9.zip
+-- %% MD | unnamed
+Or alternatively, you could take the above advise about leveraging Parquet files whenever possible and stream the zip file, unzip it and save it into a parquet file format in your tmp folder.
+-- %% MD | unnamed
+The below shell command uses a stream: download the ZIP to memory, extract the CSV to stdout, pipe that into DuckDB reading from /dev/stdin and then add a COPY to write Parquet to the folder path `/tmp/74id-aqj9.parquet`.
+
+
+-- %% TEXT | unnamed
+curl -sL 'https://opendatasoft-s3.s3.amazonaws.com/downloads/archive/74id-aqj9.zip' \
+| python3 -c "import sys,io,zipfile; z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); sys.stdout.buffer.write(z.read('74id-aqj9.csv'))" \
+| duckdb -c "CREATE TABLE remote_74id AS SELECT * FROM read_csv_auto('/dev/stdin'); COPY remote_74id TO '/tmp/74id-aqj9.parquet' (FORMAT PARQUET);"
+-- %% MD | unnamed
+Verify the file:
+-- %% TEXT | unnamed
+ls -lh /tmp/74id-aqj9.parquet
+duckdb -c "SELECT COUNT(*) FROM read_parquet('/tmp/74id-aqj9.parquet');"
+-- %% SQL_RAW | unnamed
+SELECT COUNT(*) FROM read_parquet('/tmp/74id-aqj9.parquet');
+-- %% MD | unnamed
+Alternate: Python in-memory approach (uses requests, pandas, duckdb):
+-- %% PYTHON | unnamed
+import io, zipfile, requests, pandas as pd, duckdb
+url = "https://opendatasoft-s3.s3.amazonaws.com/downloads/archive/74id-aqj9.zip"
+r = requests.get(url)
+z = zipfile.ZipFile(io.BytesIO(r.content))
+df = pd.read_csv(io.BytesIO(z.read('74id-aqj9.csv')))
+con = duckdb.connect()
+con.register("df", df)
+print(con.execute("SELECT * FROM df LIMIT 5").fetchdf())
+-- %% MD | unnamed
+Alternate: Use a stream: download the ZIP to memory, extract the CSV to stdout, and pipe that into DuckDB reading from /dev/stdin.
+-- %% MD | unnamed
+Example (shell, no file saved):
+-- %% TEXT | unnamed
+curl -L 'https://opendatasoft-s3.s3.amazonaws.com/downloads/archive/74id-aqj9.zip' \
+| python3 -c "import sys,io,zipfile; z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); sys.stdout.buffer.write(z.read('74id-aqj9.csv'))" \
+| duckdb -c "CREATE TABLE remote_74id AS SELECT * FROM read_csv_auto('/dev/stdin'); SELECT count(*) FROM remote_74id;"
+-- %% MD | unnamed
+Minimal check / preview (first 10 rows):
+-- %% TEXT | unnamed
+curl -L 'https://opendatasoft-s3.s3.amazonaws.com/downloads/archive/74id-aqj9.zip' \
+| python3 -c "import sys,io,zipfile; z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); sys.stdout.buffer.write(z.read('74id-aqj9.csv'))" \
+| duckdb -c "SELECT * FROM read_csv_auto('/dev/stdin') LIMIT 10;"
+-- %% MD | unnamed
+### Loading the bike station readings
+-- %% SQL_RAW | unnamed
+FROM '/tmp/74id-aqj9.parquet' LIMIT 5;
+-- %% SQL_RAW | unnamed
+DESCRIBE
+SELECT *
+FROM '/tmp/74id-aqj9.parquet';
+-- %% MD | unnamed
+Alternative CLI method
+-- %% MD | unnamed
+The file-basename-derived table name 74id-aqj9 is not a valid unquoted SQL identifier (starts with a digit and contains a hyphen), so quote the generated table name:
+-- %% TEXT | unnamed
+duckdb '/tmp/74id-aqj9.parquet' -c 'FROM "74id-aqj9";'
+-- %% MD | unnamed
+To better understand the contents and inferred datatypes of the CSV file, we can use .mode command to alter the output format for displaying tables.
+-- %% MD | unnamed
+You can see the full range of supported dot commands in the DuckDB documentation: https://duckdb.org/docs/stable/clients/cli/dot_commands.html
+-- %% TEXT | unnamed
+.mode line
+-- %% SQL_RAW | unnamed
+FROM '/tmp/74id-aqj9.parquet' LIMIT 1;
+-- %% SQL_RAW | unnamed
+.mode duckbox
+-- %% MD | unnamed
+### Specifying data load formats
+-- %% MD | unnamed
+Cast the BIGINT to VARCHAR before calling strptime.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE bikes AS
+SELECT
+  strptime(CAST(RUNDATE AS VARCHAR), '%Y%m%d%H%M%S') AS RUNDATE,
+  * EXCLUDE(RUNDATE)
+FROM read_parquet('/tmp/74id-aqj9.parquet');
+-- %% MD | unnamed
+### Summarizing the bike station readings
+-- %% MD | unnamed
+Count Rows
+-- %% SQL_RAW | unnamed
+SELECT count(*)
+FROM bikes;
+-- %% MD | unnamed
+Summarize the dataset
+-- %% MD | unnamed
+SUMMARIZE command gives us information about the data type for each column, as well as their range of values, number of unique values, average value, standard deviation,  25th quartile, 50th quartile, 75th quartile, count, and the proportion of rows containing NULL values.
+-- %% SQL_RAW | unnamed
+SUMMARIZE 
+SELECT *  
+FROM bikes;
+-- %% SQL_RAW | unnamed
+SUMMARIZE bikes;
+-- %% MD | unnamed
+Use EXCLUDE clause to specify a much shorter list of columns we want to exclude from the results instead of having to explicitly list every column we want to include.
+-- %% SQL_RAW | unnamed
+SELECT * EXCLUDE(count, q25, q50, q75) 
+FROM (SUMMARIZE bikes); 
+-- %% MD | unnamed
+## Exporting data
+-- %% MD | unnamed
+### Exporting a table into a CSV file
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE bike_readings_april 
+as 
+SELECT * 
+FROM bikes 
+WHERE rundate between '2017-04-01' and '2017-04-30';
+-- %% SQL_RAW | unnamed
+FROM bike_readings_april LIMIT 5;
+-- %% SQL_RAW | unnamed
+COPY bike_readings_april TO '/workspaces/Getting-Started-with-DuckDB/chapter_02/bike_readings_april.csv';
+-- %% SQL_RAW | unnamed
+COPY bike_readings_april TO '/workspaces/Getting-Started-with-DuckDB/chapter_02/bike_readings_april.tsv' 
+    (HEADER false, DELIM '\t');
+-- %% MD | unnamed
+### Exporting JSON data
+-- %% SQL_RAW | unnamed
+COPY ( 
+    SELECT NAME, RUNDATE 
+    FROM bike_readings_april 
+) TO '/workspaces/Getting-Started-with-DuckDB/chapter_02/bike_readings_april.json' 
+    (FORMAT JSON, TIMESTAMPFORMAT '%d %B %Y'); 
+-- %% MD | unnamed
+### Exporting Parquet with Hive partitioning
+-- %% MD | unnamed
+**Hive partitioning** is a technique used to logically organize data into smaller subsets based on a partitioning rule of the data.
+-- %% SQL_RAW | unnamed
+COPY (
+    SELECT *, date_trunc('day', rundate) AS rundate_truncated
+    FROM bike_readings_april 
+) TO '/workspaces/Getting-Started-with-DuckDB/chapter_02/bike_readings' 
+(FORMAT PARQUET, PARTITION_BY (rundate_truncated), OVERWRITE_OR_IGNORE true);
+-- %% MD | unnamed
+Splitting exports into multiple Parquet files can simplify storage and improve the performance of systems that need to read the data by reducing the amount of data scanned and processed.

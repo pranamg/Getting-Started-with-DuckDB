@@ -48,7 +48,7 @@ FROM movies;
 SELECT movie_release_map['Quantum of Solace']
 FROM movies;
 
-
+-- results in error in DuckDB 1.4. The above query results in retrieval of the underlying values directly.
 SELECT movie_release_map['Quantum of Solace'][1]
 FROM movies;
 ```

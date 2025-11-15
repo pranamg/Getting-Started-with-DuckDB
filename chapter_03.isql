@@ -1,0 +1,368 @@
+-- %% MD | unnamed
+# Data Manipulation with DuckDB
+-- %% MD | unnamed
+- Ensure this folder exists before running cells in .isql file 
+-- %% TEXT | unnamed
+mkdir -p /tmp/ducklab
+-- %% TEXT | unnamed
+duckdb
+-- %% MD | unnamed
+## Data wrangling with DuckDB - cleaning and reshaping data
+-- %% MD | unnamed
+Data wrangling is the process of transforming raw data into a more usable shape, making it more appropriate and valuable for a variety of downstream applications.
+
+Data wrangling typically follows a set of general steps, beginning with extracting the data in a raw form from the data source, performing any cleaning required, such as removning duplicates and handling missing values, and then performing any transformations required, such as aggregating, sorting, or joining, in order to match a desired target structure, and then finally deposting the curated data into a target location for subsequent use.
+-- %% MD | unnamed
+Imagine we are tasked with analyzing a web server log of user requests by capturing each user interaction as a new line in a text file with a format established by the web server.
+
+`151.239.2.90 user alice [26/Jan/2023:20:28:37 +0330] "GET /image/18921/productModel/50x50 HTTP/1.1" 200 1323 "https://www.example.com" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:64.0) Gecko/20100101 Firefox/64.0" "-" "en"`
+
+where:
+- 151.239.2.90 is the Internet Protocol (IP) address
+- user is the client identifier
+- alice is the user identifier
+- 26/Jan/2023:20:28:37 +0330 is the time of request
+- GET /image/18921/productModel/50x50 HTTP/1.1 is the request line from the client.
+- 200 is the HTTP response status code returned to the client.
+- 1323 is the number of bypes returned to the client
+- en is the language code
+
+-- %% MD | unnamed
+## Data import and manipulation
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE web_log_text (raw_text VARCHAR);
+-- %% SQL_RAW | unnamed
+COPY web_log_text FROM '/workspaces/Getting-Started-with-DuckDB/chapter_03/access.log' (DELIM '');
+-- %% SQL_RAW | unnamed
+FROM web_log_text LIMIT 10;
+-- %% MD | unnamed
+### Regular expressions
+-- %% MD | unnamed
+Regular expressions are sequences of characters that are used to match targeted patterns within text data programatically. They are a powerful and concise way to work with text data, including tasks such as extracting, finding, replacing, or validating expected text values. Wikipedia has a good overview of regular expressions (https://en.wikipedia.org/wiki/Regular_expression)
+-- %% MD | unnamed
+### The regexp_extract function
+-- %% MD | unnamed
+#### IP Address extraction
+-- %% SQL_RAW | unnamed
+SELECT 
+    regexp_extract(raw_text, '^[0-9\.]*' ) AS client_ip 
+FROM  web_log_text
+LIMIT 3;
+-- %% MD | unnamed
+### Using regular expressions for text extraction
+-- %% MD | unnamed
+Use the regexp_extract function to extract the values for each record corresponding to the following fields:
+- The visiting client's IP address
+- The timestamp of the record
+- The HTTP request method
+- The language provided by the client
+-- %% SQL_RAW | unnamed
+SELECT regexp_extract(raw_text, '^[0-9\.]*' ) AS client_ip, 
+    regexp_extract(raw_text, '\[(.*)\]',1 ) AS date_text,
+    regexp_extract(raw_text, '"([A-Z]*) ',1 ) AS http_method,
+    regexp_extract(raw_text, '([a-zA-Z\-]*)"$', 1) AS lang
+FROM  web_log_text
+LIMIT 5;
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE web_log_split AS
+SELECT regexp_extract(raw_text, '^[0-9\.]*' ) AS client_ip, 
+    regexp_extract(raw_text, '\[(.*)\]',1 ) AS http_date_text,
+    regexp_extract(raw_text, '"([A-Z]*) ',1 ) AS http_method,
+    regexp_extract(raw_text, '([a-zA-Z\-]*)"$', 1) AS http_lang
+FROM  web_log_text;
+-- %% MD | unnamed
+## Altering tables and creating views
+-- %% MD | unnamed
+### Converting strings to dates
+-- %% SQL_RAW | unnamed
+FROM web_log_split LIMIT 10;
+-- %% MD | unnamed
+Use DuckDB's strptime function to parse a string and convert it to a timestamp value.
+-- %% SQL_RAW | unnamed
+SELECT client_ip,
+    strptime(
+        http_date_text,
+        '%d/%b/%Y:%H:%M:%S %z'
+    ) AS http_date,
+    http_method,
+    http_lang,
+FROM web_log_split;
+-- %% MD | unnamed
+### Add a new column
+-- %% SQL_RAW | unnamed
+ALTER TABLE web_log_split ADD COLUMN http_date
+    TIMESTAMP WITH TIME ZONE;
+-- %% SQL_RAW | unnamed
+UPDATE web_log_split
+SET http_date = strptime(
+    http_date_text,
+    '%d/%b/%Y:%H:%M:%S %z'
+);
+-- %% SQL_RAW | unnamed
+SELECT client_ip,
+    http_date,
+    http_method,
+    http_lang
+FROM web_log_split;
+
+-- %% MD | unnamed
+### Creating a language lookup table
+-- %% MD | unnamed
+The next part of data wrangling will be to enrich the dataset by converting the language codes in http_lang column into more descriptive language names such as English, Korean and French.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE language_iso (
+    lang_iso VARCHAR PRIMARY KEY, 
+    language_name VARCHAR
+);
+-- %% SQL_RAW | unnamed
+INSERT INTO language_iso
+FROM read_csv('/workspaces/Getting-Started-with-DuckDB/chapter_03/language_iso.csv');
+
+-- %% SQL_RAW | unnamed
+FROM language_iso LIMIT 10;
+-- %% MD | unnamed
+### Join tables with DuckDB
+-- %% MD | unnamed
+- INNER JOIN: returns records that have matching values in both tables.
+- LEFT OUTER JOIN: returns all the records from the left table (regardless of matches) and the matched records from the right table.
+- RIGHT OUTER JOIN: returns all records from the right table and the matched records from the left table.
+- FULL OUTER JOIN: returns all records when there is a match in either the left or right table.
+
+A good visual guide is available at https://atlassian.com/data/sql/sql-join-types-explained-visually
+-- %% SQL_RAW | unnamed
+SELECT wls.http_date, wls.http_lang, lang.language_name
+FROM web_log_split AS wls
+LEFT OUTER JOIN language_iso AS lang
+    ON (wls.http_lang = lang.lang_iso);
+-- %% MD | unnamed
+### Creating a view
+-- %% MD | unnamed
+An SQL view, which DuckDB has support for via the CREATE VIEW command, enables us to create a kind of virutal table that behaves much like a regular table in terms of how it can be queried, however, it does not store any data itself; instead it will evaluate the results of the associated query on demand.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE VIEW web_log_view AS
+SELECT wls.client_ip,
+    strptime(
+        wls.http_date_text,
+        '%d/%b/%Y:%H:%M:%S %z'
+    ) AS http_date,
+    wls.http_method,
+    wls.http_lang,
+    lang.language_name 
+FROM web_log_split AS wls
+LEFT OUTER JOIN language_iso lang
+    ON (wls.http_lang = lang.lang_iso);
+-- %% SQL_RAW | unnamed
+DESCRIBE web_log_view;
+-- %% SQL_RAW | unnamed
+FROM web_log_view
+LIMIT 5;
+-- %% MD | unnamed
+#### Performance Considerations of Views
+-- %% MD | unnamed
+It's important to note that since views are not persistent, each time a view is queried, it will be evaluated again. This will have performance implications when the view contains complex logic or when the underlying dataset is large.
+-- %% MD | unnamed
+### Scripting SQL steps
+-- %% MD | unnamed
+We can put multiple SQL commands in a text file and instruct DuckDB to process the steps sequentially with the .read dot command.
+-- %% SQL_RAW | unnamed
+DROP VIEW IF EXISTS web_log_view;
+DROP TABLE IF EXISTS language_iso;
+DROP TABLE IF EXISTS web_log_split;
+DROP TABLE IF EXISTS web_log_text;
+-- %% SQL_RAW | unnamed
+.read "/workspaces/Getting-Started-with-DuckDB/chapter_03/web_log_script.sql"
+-- %% MD | unnamed
+## Aggregate functions and common table expressions
+-- %% MD | unnamed
+SQL queries from web_log_script.sql
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE web_log_text (raw_text VARCHAR);
+
+COPY web_log_text 
+FROM '/workspaces/Getting-Started-with-DuckDB/chapter_03/access.log' (delimiter '');
+
+CREATE OR REPLACE TABLE web_log_split
+AS
+SELECT regexp_extract(raw_text, '^[0-9\.]*' ) as client_ip, 
+  regexp_extract(raw_text, '\[(.*)\]',1 ) as http_date_text,
+  regexp_extract(raw_text, '"([A-Z]*) ',1 ) as http_method,
+  regexp_extract(raw_text, '([a-zA-Z\-]*)"$', 1) as http_lang
+FROM  web_log_text;
+
+
+CREATE OR REPLACE TABLE language_iso(
+  lang_iso VARCHAR PRIMARY KEY, 
+  language_name VARCHAR);
+
+INSERT INTO language_iso
+SELECT *
+FROM read_csv('/workspaces/Getting-Started-with-DuckDB/chapter_03/language_iso.csv', AUTO_DETECT=TRUE, header=True);
+
+CREATE OR REPLACE VIEW web_log_view
+AS
+SELECT wls.client_ip,
+strptime(wls.http_date_text, '%d/%b/%Y:%H:%M:%S %z') as http_date,
+wls.http_method,
+wls.http_lang,
+lang.language_name 
+FROM web_log_split wls
+LEFT OUTER JOIN language_iso lang on (wls.http_lang = lang.lang_iso);
+
+
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM web_log_view
+LIMIT 5;
+-- %% MD | unnamed
+### Aggregate functions
+-- %% SQL_RAW | unnamed
+SELECT min(http_date) AS date_earliest,
+    max(http_date) AS date_latest,
+    count(*) AS web_log_count
+FROM web_log_view;
+-- %% MD | unnamed
+### Bucketing dates
+-- %% MD | unnamed
+The **time_bucket** function is a DuckDB function that allows us to truncate a timestamp to the beginning of the nearest specified interval. This function can be useful when we want to group timestamps by arbitrary intervals.
+-- %% SQL_RAW | unnamed
+SELECT http_date,
+    time_bucket(interval '1 day', http_date) AS day
+FROM web_log_view;
+-- %% MD | unnamed
+### Common table expressions
+-- %% MD | unnamed
+A **common table expression (CTE)** is a temporary named result set that can be used in a subsequent SQL statement. You can think of a CTE as functioning like a view that is only able to be used by the query it's defined in. 
+-- %% MD | unnamed
+A CTE is defined using the **WITH** keyword, followed by an expression name, the **AS** keyword, and then a query definition.
+-- %% SQL_RAW | unnamed
+WITH web_cte AS (
+    SELECT client_ip,
+        time_bucket(interval '1 day', http_date) AS day,
+        language_name
+    FROM web_log_view
+)
+SELECT day, language_name, count(*) AS count
+FROM web_cte
+GROUP BY day, language_name
+ORDER BY day, count(*) DESC;
+-- %% MD | unnamed
+The **GROUP BY** clause is a common ingredient when performing aggregations. It collapses rows together into groupings of distinct values, allowing us to apply aggregate operations over gropus of rows that match specified criteria.
+-- %% MD | unnamed
+### Pivot tables
+-- %% MD | unnamed
+The SQL **PIVOT** command is used to transform rows into columns. This **PIVOT** command is useful in analysis situations where it is convenient to summarize data from different categories or groups in a single view.
+-- %% SQL_RAW | unnamed
+WITH web_cte AS (
+  SELECT time_bucket(interval '1 day', http_date) AS day,
+  language_name
+  FROM web_log_view
+)
+PIVOT web_cte ON language_name USING count(*);
+-- %% MD | unnamed
+## Joining data from multiple tables
+-- %% MD | unnamed
+### New York taxi data
+-- %% MD | unnamed
+The NYC Taxi and Limousine Commission provides a collection of data that contains information abou the trips taken by yellow and green taxis in New York City. The dataset includes variables such as pickup and dropp-off locations, dates and times, passenger counts, trip distances, fares, tips, tolls, and payment types. The dataset is publicly available and is interesting for analyzing traffic patterns and evaluating tipping behavior.
+-- %% MD | unnamed
+The dataset is updated monthly and can be accessed through the New York City website (https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page). The data dictionary describing the attributes of the yellow taxi trip records is available on their website. (https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_yellow.pdf)
+-- %% MD | unnamed
+### Reading remote files with the HTTPFS extension
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE trips AS
+SELECT *
+FROM read_parquet('https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet');
+-- %% SQL_RAW | unnamed
+SELECT tpep_pickup_datetime, 
+    trip_distance, 
+    fare_amount, 
+    tip_amount,  
+    PULocationID, 
+    DOLocationID
+FROM trips 
+LIMIT 10;
+-- %% MD | unnamed
+### Location lookup
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE locations (
+  LocationID int  PRIMARY KEY,
+  Borough VARCHAR,
+  Zone VARCHAR,
+  service_zone VARCHAR
+);
+-- %% SQL_RAW | unnamed
+INSERT INTO locations(LocationID, Borough, Zone, service_zone)
+SELECT LocationID, Borough, Zone, service_zone
+FROM read_csv('https://d37ci6vzurychx.cloudfront.net/misc/taxi+_zone_lookup.csv');
+-- %% SQL_RAW | unnamed
+SELECT LocationID, Borough, Zone
+FROM locations
+LIMIT 5;
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE trips_with_location AS
+SELECT t.*,
+    l_pu.zone AS pick_up_zone,
+    l_do.zone AS drop_off_zone
+FROM trips AS t
+LEFT JOIN locations AS l_pu
+    ON l_pu.LocationID = t.PULocationID
+LEFT JOIN locations AS l_do
+    ON l_do.LocationID = t.DOLocationID;
+
+-- %% SQL_RAW | unnamed
+SELECT tpep_pickup_datetime, 
+    pick_up_zone, 
+    drop_off_zone, 
+    trip_distance
+FROM trips_with_location
+LIMIT 5;
+
+-- %% MD | unnamed
+### Taxi trip cost and tipping
+-- %% SQL_RAW | unnamed
+SELECT time_bucket(interval '1 day', tpep_pickup_datetime) AS day_of,
+    count(*) AS num_trips,
+    min(fare_amount) AS fare_min,
+    max(fare_amount) AS fare_max,
+    avg(fare_amount) AS fare_avg,
+    avg(tip_amount) AS tip_avg,
+    avg(case when Payment_type =1 then tip_amount/fare_amount end)*100 AS cc_tip_avg_pct
+FROM trips_with_location 
+WHERE tpep_pickup_datetime BETWEEN '2023-01-20 00:00:00' and '2023-01-29 23:59:59'
+GROUP BY 1
+ORDER BY 1;
+-- %% SQL_RAW | unnamed
+SELECT time_bucket(interval '1 day', tpep_pickup_datetime) AS day_of,
+    count(*) AS num_trips,
+    min(fare_amount) AS fare_min,
+    max(fare_amount) AS fare_max,
+    round(avg(fare_amount), 2) AS fare_avg,
+    round(avg(tip_amount), 2) AS tip_avg,
+    round(avg(case when Payment_type =1 then tip_amount/fare_amount end)*100, 0) AS cc_tip_avg_pct
+FROM trips_with_location 
+WHERE tpep_pickup_datetime BETWEEN '2023-01-20 00:00:00' AND '2023-01-29 23:59:59' 
+AND fare_amount>0 
+GROUP BY 1
+ORDER BY 1;
+-- %% MD | unnamed
+### Finding the most expensive trip with window functions
+-- %% MD | unnamed
+DuckDB supports window functions (also known as analytic functions), an SQL technique for advanced data analysis. Window functions can, for example, compute moving averages, cumulative totoals, or ranks within a dataset. A window function operates on a subset of rows, allowing us to aggregate or rank a set of rows. The set of rows is referred to as a *window*, which we define with the **OVER** clause. Window functions provide a flexible mechanism for processing subgroups of data. See the DuckDB Documentation on Window Functions (https://duckdb.org/sql/window_functions.html) for further details for this flexible aggregation technique.
+-- %% SQL_RAW | unnamed
+WITH cte AS (
+    SELECT twl.*,
+        max(fare_amount) OVER
+            (PARTITION BY time_bucket(INTERVAL '1 day', 
+                tpep_pickup_datetime)) AS max_day_fare_amount
+    FROM trips_with_location twl
+)
+SELECT  tpep_pickup_datetime, pick_up_zone, drop_off_zone, fare_amount
+FROM cte
+WHERE fare_amount = max_day_fare_amount
+AND tpep_pickup_datetime 
+  BETWEEN '2023-01-20 00:00:00' AND '2023-01-29 23:59:59'
+ORDER BY tpep_pickup_datetime;
+-- %% MD | unnamed
+## Summary
+-- %% MD | unnamed
+

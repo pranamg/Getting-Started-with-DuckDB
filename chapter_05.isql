@@ -1,0 +1,197 @@
+-- %% MD | unnamed
+# DuckDB Extensions
+-- %% MD | unnamed
+## Technical requirements
+-- %% MD | unnamed
+## Expanding DuckDB capabilities with extensions
+-- %% MD | unnamed
+- **json** extension - add support for working with JSON files
+- **spatial** extension - adds support for working with geographic data types and spatial operations
+- **postgres** extension - add support for a scanner that enables DuckDB to read directly from running PostgresSQL database instances
+
+-- %% MD | unnamed
+### Available extensions in DuckDB
+-- %% SQL_RAW | unnamed
+mkdir -p /tmp/ducklab
+-- %% SQL_RAW | unnamed
+duckdb
+-- %% SQL_RAW | unnamed
+SELECT * 
+FROM duckdb_extensions();
+-- %% MD | unnamed
+To build your own DuckDB extension, have a look at the template guide at https://github.com/duckdb/extension-template
+-- %% MD | unnamed
+### The SQLite extension
+-- %% MD | unnamed
+The **sqlite** extension(also known as **sqlite_scanner**) allows DuckDB to read and write data from a database file created by **SQLite**. SQLite is a widely used in-memory database that is frequently used in mobile applications and embeded applications.
+-- %% SQL_RAW | unnamed
+INSTALL sqlite_scanner;
+LOAD sqlite_scanner;
+-- %% SQL_RAW | unnamed
+SELECT extension_name, installed, loaded
+FROM duckdb_extensions()
+WHERE extension_name = 'sqlite_scanner';
+-- %% SQL_RAW | unnamed
+ATTACH '/workspaces/Getting-Started-with-DuckDB/chapter_05/my_sqlite.db' (TYPE sqlite);
+-- %% SQL_RAW | unnamed
+SHOW ALL TABLES;
+-- %% SQL_RAW | unnamed
+FROM my_sqlite.countries_sqlite;
+-- %% MD | unnamed
+### Reading and writing remote files using HTTPFS extension
+-- %% MD | unnamed
+DuckDB's **httpfs** extension enables DuckDB to both read and write remote files. In addition to being able to read publicly hosted files over HTTP(S), the **https** extension also enables the reading and writing of files in cloud object storage using the S3 API.
+-- %% MD | unnamed
+Many useful datasets are openly available on the public internet. For example, the United States Census Bureau (https://www.census.gov) makes available data containing information on population, demographics, and housing.
+-- %% SQL_RAW | unnamed
+INSTALL httpfs;
+LOAD httpfs;
+-- %% SQL_RAW | unnamed
+FROM read_csv('https://www2.census.gov/programs-surveys/popest/datasets/2020-2022/cities/totals/sub-est2022.csv');
+-- %% MD | unnamed
+At the time of writing, the **httpfs** extension has been tested against the following object storage services. **AWS S3**, Google Cloud's **Cloud Storage, lakeFS, and Minio**
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE SECRET mysecret (
+    TYPE S3,
+    REGION 'us-east-1',
+    ENDPOINT 's3.amazonaws.com'
+);
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM read_parquet('s3://duckdb-s3-bucket-public/countries.parquet')
+WHERE name SIMILAR TO '.*Republic.*';
+-- %% MD | unnamed
+This bucket is public, meaning we didn't need to authenticate ourselves to get access to the file. If the file is not publicly accessible, the DuckDB **httpfs** extension can be configured to set an access key ID and secret access key. You can learn more about the configuring secrets and the methods for handling multiple secrets for a variety of cloud service providers in the DuckDB documentation (https://duckdb.org/docs/sql/statements/create_secret).
+-- %% MD | unnamed
+Once you have set these with appropriate credentials, not only will you be able to read from cloud storage that requires authentication, but you'll also be able to write files to cloud storagee-provided, of course, you have the appropriate permissions to do so.
+-- %% MD | unnamed
+### Full-text search indexes
+-- %% MD | unnamed
+**Full-Text Search (fts)** DuckDB extension, which adds support for searching over textual data stored in DuckDB. Using this extension involves the creation of large text collections stored as columns in DuckDB tables. Among other applications , full-text search indexes can be used to build search functionality that enables users to find relevant information based on natural language queries composed of words or phrases.
+-- %% SQL_RAW | unnamed
+SET temp_directory = '/workspaces/Getting-Started-with-DuckDB/chapter_04/tmp.tmp';
+PRAGMA temp_directory='/workspaces/Getting-Started-with-DuckDB/chapter_04/tmp.tmp';
+SET threads TO 1;
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE SEQUENCE book_details_seq;
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE book_details AS
+SELECT nextval('book_details_seq') AS book_details_id,
+    Title as book_title, 
+    description as book_description
+FROM read_csv('/workspaces/Getting-Started-with-DuckDB/chapter_04/books_data.csv');
+-- %% SQL_RAW | unnamed
+SUMMARIZE book_details;
+-- %% SQL_RAW | unnamed
+INSTALL fts; 
+LOAD fts;
+-- %% SQL_RAW | unnamed
+PRAGMA create_fts_index(
+    'book_details',
+    'book_details_id',
+    'book_title',
+    'book_description',
+    overwrite=true
+);
+-- %% MD | unnamed
+We now have a full-text search index that can be used to query the **book_title** and **book_description** columns. We'll make queries against the index by using a retrieval macro called **match_bm25**, which is created automatically when the **create_fts_index** function is invoked. this macro is created under the schema that follows the pattern **fts<schema>_<table-name>**. Since our **book_details** table is located in the **main** schema, our fully qualified macro name is **fts_main_book_details.match_bm25**.
+-- %% MD | unnamed
+**common table expression (CTE)** can be thought of as an inline view that captures a modular component of query logic.
+-- %% SQL_RAW | unnamed
+WITH book_cte AS (
+    SELECT *, 
+    fts_main_book_details.match_bm25(
+        book_details_id, 
+        'travel france wine'
+      ) AS match_score
+    FROM book_details
+)
+SELECT book_title, book_description, match_score
+FROM book_cte
+WHERE match_score IS NOT NULL
+ORDER BY match_score DESC
+LIMIT 10;
+-- %% MD | unnamed
+We can require all terms to be present in matching fields by setting the **conjunctive:=1** parameter of the **match_bm25** macro. It is also possible to specify the parameters of the **create_fts_index** function, allowing you to conver them into terms (or **tokens**) that are inserted into the index. This includes customizations such as disabling conversion to lowercase text, disabling the stripping of character accents, and controlling which words are excluded from being indexed (referred to as **stopwords**, which are words such as *is* and *the*, which can be disregarded from the index). See the **fts** extensions documentations page (https://duckdb.org/docs/extensions/full_text_search) for a complete list of the customizations that you can make to index creation and querying.
+-- %% MD | unnamed
+### Working with geospatial data
+-- %% MD | unnamed
+Geospatial data describes the location and attributes of spatial objects. the DuckDB **spatial** extension adds support for working with geospatial data types. With the **spatial** extension loaded, we can store, query, analyze, and manipulate geospatial data in DuckDB using SQL commands.
+-- %% MD | unnamed
+The primary data type that the spatial extension introduces is the **GEOMETRY** data type. Underlying each **GEOMETRY** object is a more specific geometric subtype, such as **POINT** and **LINE**. You can use geospatial data to calculate the distances between locations.
+-- %% MD | unnamed
+#### The spatial extension
+-- %% SQL_RAW | unnamed
+INSTALL spatial; 
+LOAD spatial;
+-- %% MD | unnamed
+The **spatial** extension provides the **st_point** function, which creates a **POINT** geometry object from two **DOUBLE** values, representing a point in a geographic co-ordinate system:
+-- %% SQL_RAW | unnamed
+SELECT st_point(48.858935, 2.293412) AS Eiffel_Tower;
+-- %% MD | unnamed
+The two numbers provided to the **st_point** function could be any **x,y** co-ordinates in any number of different co-ordinate reference system. Like many geographic information systems, the DuckDB **spatial** extensions allows us to use **EPSG** codes that define spatial reference systems for representing points on the Earth. The acronym EPSG has its origins in the **European Petroleum Survey Group**, with the EPSG code uniquely identifying which co-ordinate system or spatial reference system in use.
+-- %% MD | unnamed
+Different spatial reference systems correspond to different strategies for p;rojecting naive two-dimensional co-ordinates onto the spherical surface of the Earth. Each projection strategy has different trade-offs with respect to what type of distortions are introduced from the projection process, which means that it can be import to choose one that is suitable for your application.
+
+- **EPSG:4326** is used for representing geographic co-ordinates as latitudes and longitude pairs, with degrees as the unit
+- **EPSG:27563** is a projection that covers northern France and uses meters as the unit
+-- %% SQL_RAW | unnamed
+SELECT
+  st_point(48.858935, 2.293412) AS Eiffel_Tower, 
+  st_point(48.873407, 2.295471) AS Arc_de_Triomphe,
+  st_distance(
+      st_transform(Eiffel_Tower, 'EPSG:4326', 'EPSG:27563'), 
+      st_transform(Arc_de_Triomphe, 'EPSG:4326', 'EPSG:27563')
+  ) AS Aerial_Distance_M;
+-- %% MD | unnamed
+### Reading Microsoft Excel files
+-- %% MD | unnamed
+A perhaps surprising feature of the DuckDB **spatial** extension is its ability to read and write the **xlsx** file format. We can use the **st_read** function included within the spatial extension to read Microsoft Excel files.
+-- %% MD | unnamed
+In recent versions of DuckDB, you could leverage the **Excel** extension too.
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM st_read('/workspaces/Getting-Started-with-DuckDB/chapter_05/stations.xlsx', layer='stations');
+-- %% SQL_RAW | unnamed
+FROM st_read('/workspaces/Getting-Started-with-DuckDB/chapter_05/stations.xlsx', layer='stations');
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE stations AS
+SELECT *
+FROM st_read('/workspaces/Getting-Started-with-DuckDB/chapter_05/stations.xlsx', layer='stations');
+-- %% MD | unnamed
+Alternatively, using Excel extension
+-- %% SQL_RAW | unnamed
+INSTALL Excel;
+LOAD Excel;
+-- %% SQL_RAW | unnamed
+FROM read_xlsx('/workspaces/Getting-Started-with-DuckDB/chapter_05/stations.xlsx', sheet='stations');
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE stations AS
+SELECT *
+FROM read_xlsx('/workspaces/Getting-Started-with-DuckDB/chapter_05/stations.xlsx', sheet='stations');
+-- %% MD | unnamed
+### Points within a polygon
+-- %% MD | unnamed
+We can use the **POLYGON** spatial type to store the list of geographic features, such as the boundary markers of a geographic region. We can use the **geojson** file format to encode the co-ordinate pairs that specify the vertices of **POLYGON** that encompasses the area of interest.
+-- %% MD | unnamed
+The **bordeaux_wine_region.geojson** file represents the geographic boundary of the Bordeaux wine region.
+-- %% SQL_RAW | unnamed
+SELECT geom FROM st_read('/workspaces/Getting-Started-with-DuckDB/chapter_05/bordeaux_wine_region.geojson');
+-- %% MD | unnamed
+This query returns a single record containing a **POLYGON** object. This polygon contains a list of coordinate points that represent the boundaries of the area that contains a geographic location.
+-- %% SQL_RAW | unnamed
+SELECT station_name
+FROM stations
+WHERE st_within(
+    st_point(longitude, latitude), 
+    (
+        SELECT geom
+        FROM st_read('/workspaces/Getting-Started-with-DuckDB/chapter_05/bordeaux_wine_region.geojson')
+    )
+);
+-- %% MD | unnamed
+The **st_within** function within the **WHERE** clause serves as a predicate, checking if each of the points representing the stations is completely inside the polygon that defines the geographic region. The first argument to the function is a **POINT** value created using **st_within**, and the second argumnet is a **POLYGON** value returned using a **SELECT** statement that converts the WKB data from the GeoJSON file into a **GEOMETRY** object.
+-- %% MD | unnamed
+This set of examples has helped illustrate how DuckDB's **spatial** extension enhances DuckDB's capabilities by supporting geospatial data types and operations. The ability to store, query and analyze geospatial data is a particularly valuable addition to the analytical capabilities of DuckDB.
+-- %% MD | unnamed
+You can explore DuckDB's full catalogues of extensions, to see what other functionality you can take advantage of: https://duckdb.org/docs/extensions.

@@ -100,11 +100,22 @@ SELECT
 SELECT *
 FROM st_read('stations.xlsx', layer='stations');
 
--- reading Excel XLSX files
+-- reading Excel XLSX files using spatial extension
 CREATE OR REPLACE TABLE stations AS
 SELECT *
 FROM st_read('stations.xlsx', layer='stations');
 
+-- reading Excel XLSX files using Excel extension
+INSTALL Excel;
+LOAD Excel;
+
+FROM read_xlsx('/workspaces/Getting-Started-with-DuckDB/chapter_05/stations.xlsx', sheet='stations');
+
+CREATE OR REPLACE TABLE stations AS
+SELECT *
+FROM read_xlsx('/workspaces/Getting-Started-with-DuckDB/chapter_05/stations.xlsx', sheet='stations');
+
+-- Points within a polygon
 SELECT geom FROM st_read('bordeaux_wine_region.geojson');
 
 SELECT station_name

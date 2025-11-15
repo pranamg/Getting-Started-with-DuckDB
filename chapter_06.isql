@@ -1,0 +1,359 @@
+-- %% MD | unnamed
+# Semi-Structured Data Manipulation
+-- %% SQL_RAW | unnamed
+mkdir -p /tmp/ducklab
+-- %% MD | unnamed
+**Semi-structured data** refers to data that does not follow a strict tabular schema or data model. Such data may feature some or all the following properties:
+- Composite data structures involving multiple values with a single entry, such as sequences of values and groupings of named values within a single entry
+- Flexible schemas, both within composite values and in the shape of data across records
+- Nested data, where composite values contain further composite values, enabling the modeling of hierarchical data within individual values
+-- %% MD | unnamed
+A particularly well-known form of semi-structured data is **JavaScript Object Notation (JSON)**, which you are bound to wrangle at one point or another due to its ubiquity as a data interchange format that's used in all manner of systems, such as web **application programming interfaces (APIs), Internet of Things (IoT)** devices, web browsers, and mobile apps.
+-- %% MD | unnamed
+DuckDB offers a range of data types, built-in functions, and SQL enhancements for effectively working with semi-structured data.
+-- %% MD | unnamed
+## Licensing
+- The [Query JSON from an API](#query-json-from-an-api) section makes use of the
+  [TVmaze API](https://www.tvmaze.com/api) which is licensed by [CC
+  BY-SA](http://creativecommons.org/licenses/by-sa/4.0/).
+- All other data sets used in this chapter were created by the author
+-- %% MD | unnamed
+## Exploring nested data types
+-- %% MD | unnamed
+DuckDB offers a range of nested, or composite, data types. Nested data types are characterized by being able to store multiple values in the form of sequences of values and structures containing multiple named-property values. These nested types can contain further nested types, allowing hierarchical data to be modeled within each row of a table.
+-- %% MD | unnamed
+### The LIST data type
+-- %% MD | unnamed
+A DuckDB **LIST** is an ordered sequence of values that all have to saem data type. when used as the type of a column, each row must share the same data type for each **LIST** instance; however, lists can have variable lengths across rows. A **LIST** literal is represented as a comma-separated list of values, wrapped in square brackets.
+-- %% SQL_RAW | unnamed
+SELECT [7,8,9] AS list_int;
+-- %% MD | unnamed
+**LIST** can be empty (with zero elements) and is essentially unbounded, allowing for any number of elements. However, note that every element within **LIST** must have the same data type. You cannot mix **INTEGER** and **VARCHAR** values in a **LIST** data type.
+-- %% SQL_RAW | unnamed
+SELECT [
+    'Quantum of Solace',
+    'Skyfall', 'Spectre',
+    'No Time to Die'] AS list_string;
+-- %% MD | unnamed
+### The ARRAY data type
+-- %% MD | unnamed
+There is another nested DuckDB data type that is similar to **LIST** data type: the **ARRAY** data type. The primary difference between them is that when used as the type of a column, **LIST** values can store variable-length sequences across rows, whereas **ARRAY** values must have a fixed length across each row. This fixed size enables DuckDB to optimize how **ARRAY** values are stored and retrieved, which makes them well-suited for efficiently storing and retrieving numerical vectors. They are frequently used in machine learning and data science applications.
+-- %% MD | unnamed
+### The MAP data type
+-- %% MD | unnamed
+The **MAP** data type provides an ordered sequence of elements, each mapping a key to a corresponding values. Conceptually, you can think of a **MAP** value as being composed of two lists - one for the keys and one for the values. When creating **MAP** values, we need to be consistent with our data types. All the keys iwthin a **MAP** instance must be of the same data type. Equally, we need to be consistent and use the same data type across its values.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE movies AS
+SELECT MAP(
+    [
+        'Quantum of Solace',
+        'Skyfall',
+        'Spectre',
+        'No Time to Die'
+    ],
+    [2008, 2012, 2015, 2021]
+) AS movie_release_map;
+-- %% SQL_RAW | unnamed
+SELECT movie_release_map
+FROM movies;
+-- %% MD | unnamed
+We can retrieve the value corresponding to a specific key within a **MAP** value by specifying the desired key in square brackets.
+-- %% SQL_RAW | unnamed
+SELECT movie_release_map['Quantum of Solace']
+FROM movies;
+-- %% MD | unnamed
+### The STRUCT data type
+-- %% MD | unnamed
+**STRUCT** is a composite data type with a fixed number of ordered *entries*, each of which has a name and corresponding values. The values within a **STRUCT** data type can be retrieved by referencing the desired entry name, referred to as its *key*. When used as the type of a column, a **STRUCT** data type effectively allows you to nest multiple columns (the entries of **STRUCT**) inside a single column. It is important to note that across each row of a **STRUCT** column, the schema for the entries must be consistent across each row in the table, meaning they must all have the same key names and corresponding data types. The **STRUCT** data type enables us to group repeating data types together under a single structure. Due to their fixed shape and consistent data representation, DuckDB is extremely efficient at processing data stored within **STRUCT** columns. 
+-- %% MD | unnamed
+While the keys of **STRUCT** datat type are always strings, a given **STRUCT** can contain a variety of data types. In addition to single-valued data tpes, such as **INTEGER** and **VARCHAR**, you can also place nested data types inside of **STRUCT**, such as **LIST** and **MAP**, and even other **STRUCT** values. Remember that while given **STRUCT** can contain values of different types, all rows within a **STRUCT** column must adhere to the same schema.
+-- %% SQL_RAW | unnamed
+SELECT {
+    'movie': 'No Time to Die', 
+    'release_year': 2021, 
+    box_office: 771.2
+} AS struct_movie;
+-- %% MD | unnamed
+#### STRUCT VERSUS MAP
+-- %% MD | unnamed
+The STRUCT and MAP data types are conceptually similar in that they both contain ordered entries of keys mapping to values. When using a STRUCT column, each row must share the same schema, meaning that each STRUCT must have the same key present for each row. MAP columns, on the other hand, can have different keys present each row. This makes MAP columns particularly useful when you don't know the schema in advance, or you know the schema will vary across records. this flexibility is the primary reason to use MAP over STRUCT. If you kow that each row will have the same schema, then you should opt for using STRUCT as it confers more optimized storage and retrieval.
+-- %% MD | unnamed
+Another difference is that the keys of a STRUCT column are always strings. In contrast MAP allows other data types to be keys, but all keys in MAP must share the same data type. The values within MAP also must share the same data type, which contrasts with STRUCT, whose values can have heterogenous data types (but must be consistent across rows). Conceptually it is helpful to think MAP as being made of a list of keys of the same type that's aligned with a list of values of the same type.
+-- %% MD | unnamed
+### The UNION Data type
+-- %% MD | unnamed
+The **UNION** data type allows you to define columns whose single values can vary froma schema of possible named values, allowing you to store alternating data types across rows. You are concouraged to explore these in the DuckDB nested type documentation, where you can also dive deeper into the features of the **LIST**, **MAP**, **ARRAY**, and **STRUCT** data types.
+-- %% MD | unnamed
+## Working with lists
+-- %% MD | unnamed
+DuckDB provides a range of features and affordances that makes **LIST** a particularly powerful and flexible data type, some of which take inspiration from other languages, such as Python
+-- %% MD | unnamed
+### Preparing the data
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE film_actors AS
+SELECT *
+FROM read_csv('/workspaces/Getting-Started-with-DuckDB/chapter_06/film_actors.csv');
+-- %% SQL_RAW | unnamed
+FROM film_actors;
+-- %% MD | unnamed
+### List aggregation
+-- %% MD | unnamed
+A common task for data manipulation is aggregating many rows together into a smaller number of rows by grouping rows and combining each group into a single row. Aggregate functions such as **SUM**, **MAX**, and **COUNT** are used while deriving numerical summary statistics for each group of rows. Aggregate don't have to reduce rows into numerical values, however.
+-- %% MD | unnamed
+A particularly useful pattern that DuckDB supports is aggregating column-wise row groups into **LIST** instances that contain the contents of each group as a single values. This functionality is enabled through DuckDB's **list** aggregate function.
+-- %% SQL_RAW | unnamed
+SELECT list(actor_name) AS actors
+FROM film_actors;
+-- %% SQL_RAW | unnamed
+SELECT film_name, list(actor_name) AS actor_name_list
+FROM film_actors
+GROUP BY film_name
+ORDER BY film_name;
+-- %% MD | unnamed
+### List functions
+-- %% MD | unnamed
+Scalar list functions operate over **LIST** objects and produce a single row for each invocations, rather than changing the cardinality of the results.
+-- %% MD | unnamed
+An example of deriving the list of actors occuring in each movie and return only two actors occurring in the second and third positions of each list, we can use **list_slice** function, which extracts a slice of the elements in a list of potential indexes, which we bypass as arguments.
+-- %% SQL_RAW | unnamed
+SELECT film_name, 
+    list_slice(list(actor_name), 2, 3) AS other_actors
+FROM film_actors
+GROUP BY film_name
+ORDER BY film_name;
+-- %% MD | unnamed
+DuckDB also provides a convenient syntax fore slicing lists, which you might find familiar if you have used list slicing in Python.
+-- %% SQL_RAW | unnamed
+SELECT film_name, list(actor_name)[2:3] AS other_actors
+FROM film_actors
+GROUP BY film_name
+ORDER BY film_name;
+-- %% MD | unnamed
+One key difference from Python list indexing is that DuckDB counts its positional indexes starting from 1, whereas Python uses 0-based indexing.
+-- %% MD | unnamed
+Use DuckDB's **list_distinct** function to remove duplicate values from the list
+-- %% SQL_RAW | unnamed
+SELECT list_distinct(list(actor_name)) AS actors
+FROM film_actors;
+-- %% MD | unnamed
+**list_distinct** does not preserve the order of the original list. You can enforce ordering using **list_sort** function.
+-- %% SQL_RAW | unnamed
+SELECT list_sort(list_distinct(list(actor_name))) AS actors
+FROM film_actors;
+-- %% MD | unnamed
+The ability to apply function calls is a powerful technique that enables you to capture complex logic concisely. DuckDB allows you to chain successive applications of scalar functions using the dot(.) operator.
+-- %% SQL_RAW | unnamed
+SELECT list(actor_name).list_distinct().list_sort() AS actors
+FROM film_actors;
+-- %% MD | unnamed
+You can enforce an ordering using the **list_sort** function.
+-- %% SQL_RAW | unnamed
+SELECT list_sort(list_distinct(list(actor_name))) AS actors
+FROM film_actors;
+-- %% MD | unnamed
+Please explore the DuckDB documentation for nested functions, which outlines all the available functions for working with lists, as well as functions for working with other DuckDB nested data types: https://duckdb.org/docs/sql/functions/nested.html.
+-- %% MD | unnamed
+### List comprehensions
+-- %% MD | unnamed
+When working with lists, you may find yourself needing to apply custom transformations to each value of the list, as well as sometimes needing to filter out elements of lists. DuckDB provides a convenient list comprehension syntax, which allows you to do both of these things together. This is modeled off the list comprehension syntax found in Python.
+-- %% MD | unnamed
+DuckDB's **lower** list comprehension expression converts the string values in each list into lowercase.
+-- %% MD | unnamed
+Think of list comprehension as buidling a new list based on an existing list by applying a custom operation to each value in the original list.
+-- %% MD | unnamed
+Let's say we want to get the last component of each actor's name from our list, converted into lowercase.
+-- %% MD | unnamed
+1. Split the actor-name **VARCHAR** value on space characters into a **LIST** data type of name components using DuckDB's **split** function.
+2. Retrieve the last element of the resulting **LIST** data type using positional list-indexing. Do this by using an index value of -1.
+3. Apply the **lower** function to the **VARCHAR** value that was returned from the previous step.
+-- %% SQL_RAW | unnamed
+SELECT
+ [actor.split(' ')[-1].lower()
+ FOR actor IN list(actor_name)
+ ] AS actor_last_name
+FROM film_actors;
+-- %% SQL_RAW | unnamed
+SELECT
+ [actor.split(' ')[-1].lower()
+ FOR actor IN list(actor_name)
+ ].list_distinct().list_sort() AS actor_last_name
+FROM film_actors;
+-- %% MD | unnamed
+In addition to transforming the values inside lists, you can also use list comprehensions to filter out elements based on a specific constraint.
+-- %% SQL_RAW | unnamed
+SELECT
+ [actor.upper()
+ FOR actor IN list(character_name)
+ IF length(actor) > 12
+ ] AS long_characters
+FROM film_actors;
+-- %% MD | unnamed
+DuckDB's list comprehensions provide an elegant and concise way to apply custom transformation over a **LIST** data type. Please explore the full catalog of DuckDB functions, broken down by working with different type of data here: https://duckdb.org/docs/sql/functions/overview.
+-- %% MD | unnamed
+## Working with JSON
+-- %% MD | unnamed
+JSON is a ubiquitous data interchange format that you will likely encounter in your adventures with analytical data, whether sourced from the result of API calls, extracted from other databases, or used as your target data-serializatoin format. As a human-readable text format iwth the flexibility of a self-describing schema, it is perhaps one of the most frequent sources of semi-structured data that you're likely to encounter.
+-- %% MD | unnamed
+### The JSON extension
+-- %% MD | unnamed
+DuckDB's **json** extension provides a range of SQL functions for working with data. It also provides the **JSON** logical data type for representing and working with JSON values. Under the hood, DuckDB stores JSON values as strings; the **JSON** logical type allows you to work conveniently with JSON values, with DuckDB automatically performing JSON serialization and deserialization for you. The need to parse string values does mean that there is a performance hit to working **JSON** values, so for complex querying or transformation-heavy workloads, you may want to consider preparing JSON data so that it's in a conformed tabular representatoin or converting your JSON data into a more performant nested data type, such as **STRUCT** or **MAP**, if this is supported by your data's schema.
+-- %% MD | unnamed
+### Creating JSON objeects
+-- %% MD | unnamed
+We'll start our exploration of working with JSON data by looking at how to create JSON objects from existing tabular DuckDB data. We'll look at how we can do this using both scalar transformations - converting data row-by-row into corresponding JSON value rows - as well as through aggregation, where we'll group records and collapse each group into JSON values corresponding to the data in each group.
+-- %% SQL_RAW | unnamed
+SELECT json_object(
+    'film_name', film_name,
+    'actor_name', actor_name
+) AS json_created
+FROM film_actors;
+-- %% MD | unnamed
+We can use a JSON aggregate function to produce JSON objects corresponding to groups of rows. To produce a JSON object for each movie that contains each actor and their character as key-value pairs. You can use the **json_group_object** aggregate function, along with a **GROUP BY** function on the **film_name** column, to marshal a collection of desired attributes for each movie.
+-- %% SQL_RAW | unnamed
+SELECT film_name,
+    json_group_object(
+        actor_name,
+        character_name
+    ) AS actor_character_json
+FROM film_actors
+GROUP BY film_name;
+-- %% MD | unnamed
+It is worth remembering that **JSON** objects are generally slower to work with than a DuckDB **STRUCT** data type, which may look superficially similar. The consistency of the **STRUCT** object allows DuckDB to perform several optimizations, meaning they are almost always more efficient and faster to manipulate than **JSON** objects.
+-- %% MD | unnamed
+DuckDB allows us to readily convert a structured table of columns into rows of a **STRUCT** data type containing column values as key-value pairs. To do this, we simply need to **SELECT** the name of the target table, at which point DuckDB will convert each row into a single **STRUCT** value.
+-- %% SQL_RAW | unnamed
+SELECT film_actors
+FROM film_actors;
+-- %% MD | unnamed
+Please explore DuckDB's documentation around working with **STRUCT** usage yourself: https://duckdb.org/docs/sql/data_types/struct.
+-- %% MD | unnamed
+### Importing JSON data
+-- %% SQL_RAW | unnamed
+FROM read_json('/workspaces/Getting-Started-with-DuckDB/chapter_06/media_tv.json');
+-- %% MD | unnamed
+The above query returns a cleaned table of television records as rows with approprite column types inferred. The **media_payload** file has been converted into a **STRUCT** data type.
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM read_json(
+    '/workspaces/Getting-Started-with-DuckDB/chapter_06/media_tv.json',
+    columns={
+        media_type: 'VARCHAR',
+        name: 'VARCHAR',
+        media_payload: 'STRUCT(
+            type VARCHAR,
+            genres VARCHAR[],
+            premiered DATE,
+            schedule STRUCT(
+                time VARCHAR,
+                days VARCHAR[]
+            )
+        )'
+    }
+);
+
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE media AS
+SELECT *
+FROM read_json('/workspaces/Getting-Started-with-DuckDB/chapter_06/media_tv.json');
+-- %% SQL_RAW | unnamed
+DESCRIBE media;
+-- %% SQL_RAW | unnamed
+SELECT name, media_payload
+FROM media;
+-- %% MD | unnamed
+One way of exrtracting the components of **STRUCT** is to query the keys of the **media_payload** column using the dot (.) operator.
+-- %% SQL_RAW | unnamed
+SELECT name,
+    media_payload.type,
+    media_payload.genres,
+    media_payload.premiered,
+    media_payload.schedule 
+FROM media;
+-- %% MD | unnamed
+We can simply the above query and avoid the need to list each key field by selecting media_payload.* expression. You can use the * shortcut to unpack a **STRUCT** data type into separate columns without having to explicitly name each key. This is a particularly helpful shortcut for dynamically selecting all keys present within **STRUCT** objects.
+-- %% SQL_RAW | unnamed
+SELECT name, media_payload.*
+FROM media;
+-- %% MD | unnamed
+### Unpacking lists with the unnest function
+-- %% MD | unnamed
+DuckDB allows us to transform the nested data types of **LIST** or **STRUCT** and expand them into rows through the **unnext function**. Like aggregate functions, **unnest** changes the cardinality of the rsults but rather than reducing the group of rows into a single row, the **unnest** function expands a single row containing a nested value, into multiple rows, each containing a value from the nested data structure.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE media_extracted AS
+SELECT name, media_payload.*
+FROM media;
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM media_extracted;
+-- %% SQL_RAW | unnamed
+SELECT name, unnest(genres)
+FROM media_extracted;
+-- %% MD | unnamed
+This can be useful technique for processing semi-structured information, but you need to ensure the change in cardinality (number of rows) makes logical sense in the context of your query. It should also be noted that using **unnest** does not preserve the oder of the list - so the rows will appear in an arbitrary order unless an **ORDER BY** clause is used in the SQL statement.
+-- %% MD | unnamed
+### Working with inconsistent schemas
+-- %% MD | unnamed
+A common complication when working with semi-structured data is encountering datasets containing records that follow multiple schemas. A common scenario is having to work with a collection of JSON data containing records that have been collected from various sources. In this situation, you will likely have to manage the fact that records in this dataset will often conform to different schemas, making their normalization challenging.
+-- %% SQL_RAW | unnamed
+SELECT media_type, media_payload
+FROM read_json('/workspaces/Getting-Started-with-DuckDB/chapter_06/media_mixed.json');
+-- %% MD | unnamed
+The **json** extension gives us a way to inspect the structure of JSON objects programatically through the **json_group_structure** aggregate function. This function allows us to readily compare teh structure of **JSON** objects across different groupings in our dataset.
+-- %% SQL_RAW | unnamed
+SELECT media_type, json_group_structure(media_payload)
+FROM read_json('/workspaces/Getting-Started-with-DuckDB/chapter_06/media_mixed.json')
+GROUP BY media_type;
+-- %% MD | unnamed
+The key thing to observe is that if we had a larger number of media types with diverging schemas, this technique will provide a much more effective way to understand differences across schemas within a collection of heterogeneous **JSON** objects.
+-- %% SQL_RAW | unnamed
+SELECT media_type,
+    name,
+    media_payload.first_film_screened,
+    media_payload.staring
+FROM read_json('/workspaces/Getting-Started-with-DuckDB/chapter_06/media_mixed.json')
+WHERE media_type = 'film';
+-- %% SQL_RAW | unnamed
+SELECT media_type,
+    name,
+    media_payload.type,
+    media_payload.genres,
+    media_payload.premiered,
+    media_payload.schedule
+FROM read_json('/workspaces/Getting-Started-with-DuckDB/chapter_06/media_mixed.json')
+WHERE media_type = 'tv';
+-- %% SQL_RAW | unnamed
+SELECT media_type,
+    name,
+    media_payload.type,
+    media_payload.genres,
+    media_payload.premiered,
+    media_payload.schedule.time,
+    media_payload.schedule.days
+FROM read_json('/workspaces/Getting-Started-with-DuckDB/chapter_06/media_mixed.json')
+WHERE media_type = 'tv';
+-- %% MD | unnamed
+## Querying JSON data from an API
+-- %% MD | unnamed
+Let's use TVmaze API (https://www.tvmaze.com/api) to discover some details about the television show *The Simpsons*.
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM read_json(
+    'https://api.tvmaze.com/singlesearch/shows?q=The%20Simpsons'
+);
+-- %% MD | unnamed
+Let's retrieve more information about this show form a different TVmaze endpoint. We'll construct a query that fetches information about show details for season 34, episode two of *The Simpsons*. Specifically, we'll extract the average audience rating for this episode, which is included in the JSON payload response for the endpoint we'll query.
+-- %% MD | unnamed
+The **json_extract_string** function allows us to provide a JSON value and **JSONPath** expression, which specifies the element we want to extract from the JSON value. The path expression must be provided as a string, which follows JSONPath syntax. This is a small domain-specific language that supports concise queries to extract elements within nested JSON objects.
+-- %% SQL_RAW | unnamed
+ SELECT season, 
+    number, 
+    name, 
+    json_extract_string(rating, '$.average') as avg_rating, 
+    summary
+FROM read_json(
+    'https://api.tvmaze.com/shows/83/episodebynumber?season=34&number=2'
+);
+-- %% MD | unnamed
+DuckDB 's ability to work with data returned by a programming interface is rather useful, allowing us to explore data beyond file and table-based structures. The ability to query JSON from a remote API coupled with DuckDB's semi-structured data processing functions enables us to analyze a variety of rich and complex data services.
+-- %% MD | unnamed
+

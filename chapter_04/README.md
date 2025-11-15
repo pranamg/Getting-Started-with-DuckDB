@@ -21,7 +21,9 @@ If you receive the error "Error: Out of Memory Error: failed to allocate data of
 
 You can ignore this step otherwise
 ```sql
+SET temp_directory = 'tmp.tmp';
 PRAGMA temp_directory='./tmp.tmp';
+SET threads TO 1;
 ```
 
 
@@ -45,10 +47,17 @@ COPY (
     CROSS JOIN (SELECT range, case when range=0 then 'JP' else 'US' end as region FROM range (0, 2))
 ) TO 'book_reviews.parquet';
 
+SET threads TO 1;
+COPY (
+  SELECT * FROM read_parquet('book_reviews.parquet')
+) TO 'book_reviews_hive' (FORMAT parquet, PARTITION_BY (review_year, region), OVERWRITE_OR_IGNORE true);
 
 CREATE OR REPLACE TABLE book_reviews AS
 SELECT *
 FROM read_parquet('./book_reviews.parquet');
+
+SELECT * FROM read_parquet('book_reviews_hive/*/*/*.parquet', hive_partitioning=true)
+WHERE review_year<='2006';
 
 SUMMARIZE book_reviews;
 

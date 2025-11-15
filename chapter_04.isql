@@ -1,0 +1,326 @@
+-- %% MD | unnamed
+# DuckDB Operations and Performance
+-- %% MD | unnamed
+- Ensure this folder exists before running cells in .isql file
+-- %% TEXT | unnamed
+mkdir -p /tmp/ducklab
+-- %% TEXT | unnamed
+duckdb
+-- %% MD | unnamed
+## Exploring DuckDB indexes
+-- %% MD | unnamed
+A database index is a data structure that is used to improve the speed of data retrieval operations. DuckDB takes care of many of the indexing operations automatically for you.
+-- %% MD | unnamed
+DuckDB automatically creates a min-max index against every column that is a built-in **block range index (BRIN)**(https://en.wikipedia.org/wiki/Block_Range_Index). These indexes work by sampling a range of column data (a block) and storing the minimum and maximum values of each block.
+-- %% MD | unnamed
+DuckDB also supports **adaptive radix tree(ART)** indexes (https://duckdb.org/docs/sql/indexes.html), which use a highly tuned and space-efficient in-memory search tree. These indexes greatly speed up range scans, prefix lookup style queries, and joins. These are best used for high-cardinality columns.
+-- %% MD | unnamed
+An ART index is created automatically by DuckDB when you apply a **PRIMARY KEY** or **UNIQUE** constraint to a column. You can also manually create an ART index by using the **CREATE INDEX** command.
+-- %% MD | unnamed
+### Downloading the book review dataset from Kaggle
+-- %% MD | unnamed
+1. Go to [Amazon Book Reviews Dataset on Kaggle](https://www.kaggle.com/datasets/mohamedbakhet/amazon-books-reviews), log into Kaggle account, create a new API key under Profile->Settings and download and save the json file in the folder specified in the instructions.
+2. Click the **Code** section on the dataset page and extract and run the Python code for automatically downloading the relevant files into **chapter_04** directory.
+-- %% MD | unnamed
+### Preparing the book review dataset
+-- %% MD | unnamed
+A **database sequence** isa type of object that generates a series of numeric values in a specified range and order. Sequences are often used to create unique identifiers for rows in a table or generate numbers for invoices or order numbers.
+-- %% MD | unnamed
+Note: The original `Books_rating.csv` file in this folder is actually a ZIP archive containing `Books_rating.csv`. DuckDB's CSV autodetect failed because the file was compressed. To fix this, the import below reads from the ZIP by specifying `compression='zip'` in `read_csv()` so DuckDB will extract and parse the CSV inside the archive.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE SEQUENCE book_reviews_seq;
+-- %% MD | unnamed
+An SQL **cross-join** (also known as a **Cartesian join**) is used to return the Cartesian product of two tables. This means that every row of book data will be jioned with each row of dummy table without a matching conditoin, effectively doubling our dataset.
+-- %% SQL_RAW | unnamed
+COPY (
+    SELECT nextval('book_reviews_seq') as book_reviews_id,
+    Id as book_id,
+    Title as book_title,
+    Price as price,
+    User_id as user_id,
+    region,
+    to_timestamp("review/time") as review_time,
+    cast(datepart('year', review_time) as VARCHAR) as review_year,
+    "review/summary" as review_summary, 
+    "review/text" as review_text,
+    "review/score" as review_score
+    FROM read_csv('/workspaces/Getting-Started-with-DuckDB/chapter_04/Books_rating.csv',  AUTO_DETECT=TRUE) 
+    CROSS JOIN (SELECT range, case when range=0 then 'JP' else 'US' end as region FROM range (0, 2))
+) TO '/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews.parquet';
+-- %% MD | unnamed
+### Out of Memory Error
+
+If you receive the error "Error: Out of Memory Error: failed to allocate data of size", allow unused blocks to be offloaded to disk if required
+
+You can ignore this step otherwise
+```sql
+PRAGMA temp_directory='./tmp.tmp';
+```
+-- %% MD | unnamed
+### Reviewing and indexing the book review dataset
+-- %% MD | unnamed
+Depending on your hardware setup, you may encounter an out-of-memory error in the below exercises, such as *Error: Out of Memory Error: failed to allocate data of size*. This error indicates that DuckDB is unable to hold the result set within the available memory. If you do encounter an error during these steps, you can instruct DuckDB to offload to disk as reuired by establishing a temporary disk file: SET temp_directory = 'temp.tmp';
+-- %% SQL_RAW | unnamed
+SET temp_directory = '/workspaces/Getting-Started-with-DuckDB/chapter_04/tmp.tmp';
+PRAGMA temp_directory='/workspaces/Getting-Started-with-DuckDB/chapter_04/tmp.tmp';
+SET threads TO 1;
+-- %% SQL_RAW | unnamed
+SET threads TO 1;
+COPY (
+  SELECT * FROM read_parquet('/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews.parquet')
+) TO '/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews_hive' (FORMAT parquet, PARTITION_BY (review_year, region), OVERWRITE_OR_IGNORE true);
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE book_reviews AS
+SELECT *
+FROM read_parquet('/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews.parquet');
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE book_reviews AS
+SELECT * FROM read_parquet('/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews_hive/*/*/*.parquet', hive_partitioning=true)
+WHERE review_year<='2006';
+-- %% SQL_RAW | unnamed
+SUMMARIZE book_reviews;
+-- %% SQL_RAW | unnamed
+SELECT * 
+FROM book_reviews
+USING SAMPLE 10;
+-- %% MD | unnamed
+### Explaining the query plan
+-- %% SQL_RAW | unnamed
+EXPLAIN SELECT count(*)
+FROM book_reviews
+WHERE user_id = 'A1WQVN65FTJCJ6';
+-- %% SQL_RAW | unnamed
+EXPLAIN SELECT count(*)
+FROM book_reviews
+WHERE review_year = '2003';
+-- %% MD | unnamed
+### Creating an index
+-- %% SQL_RAW | unnamed
+CREATE INDEX book_reviews_idx_user_id 
+ON book_reviews(user_id);
+CREATE INDEX book_reviews_idx_year 
+ON book_reviews(review_year);
+-- %% SQL_RAW | unnamed
+SELECT * 
+FROM duckdb_indexes;
+-- %% MD | unnamed
+#### Index performance
+-- %% SQL_RAW | unnamed
+EXPLAIN
+SELECT count(*)
+FROM book_reviews
+WHERE user_id = 'A1RRTLWXDOYER5';
+-- %% SQL_RAW | unnamed
+EXPLAIN
+SELECT count(*)
+FROM book_reviews
+WHERE review_year = '2003';
+-- %% MD | unnamed
+#### Storage implications of indexes
+-- %% MD | unnamed
+DuckDB provides a set of **PRAGMA** commands, which allow us to get and set internal database engine parameters, as well as view internal database diagnostics, such as the DuckDB version, the tables in the catalog, and disk and memory usage. **Pragmas** can be used to set execution behaviors in DuckDB, such as the display of a progress bar, the ordering behavior for NULLs, and the number of CPU threads to use. For a complete list of supported pragmas in DuckDB, see https://duckdb.org/docs/sql/pragmas.html. We are interested in database size diagnostics that are provided by the **database_size** pragma. 
+-- %% SQL_RAW | unnamed
+-- close and restart DuckDB
+.open
+-- %% SQL_RAW | unnamed
+PRAGMA database_size;
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE book_reviews AS
+SELECT *
+FROM read_parquet('book_reviews.parquet');
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE book_reviews AS
+SELECT * FROM read_parquet('/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews_hive/*/*/*.parquet', hive_partitioning=true)
+WHERE review_year<='2004';
+-- %% SQL_RAW | unnamed
+PRAGMA database_size;
+-- %% SQL_RAW | unnamed
+CREATE INDEX book_reviews_idx1 ON book_reviews(region, review_score);
+-- %% SQL_RAW | unnamed
+PRAGMA database_size;
+-- %% MD | unnamed
+## Optimizing the file read performance of DuckDB
+-- %% MD | unnamed
+### File partitioning
+-- %% MD | unnamed
+Hive partitioning is a technique that allows you to organize files on disk by dividing a single table into smaller logical tables based on the values of a particular column. This column is known as the **partition key**, which frequently takes the form of a date component, dividing up records for different time periods, such as months and years.
+-- %% SQL_RAW | unnamed
+SET threads TO 1;
+COPY (
+  SELECT * FROM read_parquet('/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews.parquet')
+) TO '/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews_hive' (FORMAT parquet, PARTITION_BY (review_year, region), OVERWRITE_OR_IGNORE true);
+-- %% MD | unnamed
+|-- review_year=1996
+|   |-- region=JP
+|   |   -- data_0.parquet
+|    -- region=US
+|       -- data_0.parquet
+...
+|-- review_year=2015
+|   |-- region=JP
+|   |   -- data_0.parquet
+|    -- region=US
+|       -- data_0.parquet
+-- %% SQL_RAW | unnamed
+-- Firstly, we set a time to show the elapsed time:
+.timer on
+-- %% SQL_RAW | unnamed
+SELECT * 
+FROM read_parquet('/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews_hive/*/*/*.parquet', hive_partitioning=true)  
+WHERE review_year='2002' AND region='JP';
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM read_parquet('/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews.parquet')
+WHERE review_year='2002' AND region='JP';
+-- %% MD | unnamed
+### Parquet predicate pushdown 
+-- %% MD | unnamed
+**Predate pushdown** evaluates the predicates (the **WHERE** conditions) at a lower level and discards non-matching Parquet files. DuckDB also reads Parquet data as a stream, meannig that it can start operating on data before it is has completed its read operations on a file. This, combined with DuckDB's ability to skip columns and rows that are not needed for a query, means that it is possible to query large Parquet files that do not fit in memory.
+-- %% MD | unnamed
+### Run-time profiling exercise
+-- %% MD | unnamed
+We can enable run-time profiling to see both how much time and how many rows (cardinality) each step of a statement processes. We can use run-time profiling to measure Parquet performance optimizations.
+-- %% SQL_RAW | unnamed
+-- configure to use only 1 thread
+SET threads TO 1;
+
+PRAGMA enable_optimizer;
+PRAGMA enable_profiling;
+PRAGMA profiling_output='/workspaces/Getting-Started-with-DuckDB/chapter_04/rofile_with_pushdown.log';
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE book_reviews_1970_JP AS
+SELECT region, review_summary, review_text, review_time, review_year
+FROM read_parquet('/workspaces/Getting-Started-with-DuckDB/chapter_04/book_reviews.parquet') 
+WHERE region='JP' 
+AND review_year = '1970' ;
+PRAGMA disable_profiling;
+-- %% SQL_RAW | unnamed
+PRAGMA disable_optimizer;
+PRAGMA enable_profiling;
+PRAGMA profiling_output='/workspaces/Getting-Started-with-DuckDB/chapter_04/profile_without_pushdown.log';
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE book_reviews_1970_JP AS
+SELECT region, review_summary, review_text, review_time, review_year
+FROM read_parquet('./book_reviews.parquet') 
+WHERE region='JP' AND review_year = '1970' ;
+-- %% SQL_RAW | unnamed
+PRAGMA disable_profiling;
+-- %% SQL_RAW | unnamed
+DROP TABLE IF EXISTS book_reviews_1970_JP;
+-- %% MD | unnamed
+## Working with timestamps
+-- %% MD | unnamed
+Processing and storing temporal data are common activities in data analysis and data management. Timestamps are combinations of dates and times that are frequently used in datat analytics contexts, especially when working with time series datasets.
+-- %% MD | unnamed
+Timestamps represent distinct points in time, often referred to as **instants**. DuckDB has two data types for representing timestamps: **TIMESTAMP** and **TIMESTAMP WITH TIME ZONE**. The latter type is also available as the alias **TIMESTAMPZ**.
+-- %% MD | unnamed
+Under the hood, DuckDB uses the common practice of representing timestamps as the number of microsectonds elapsed since **1970-01-01 00:00:00** UTC, a fixed amount of time that is commonly referred to as the **Unix epoch**, or just the **epoch**. A negative timestamp value indicates an instant that is earlier than the eopch, and a positive value indicates and instant that occurs after. While it may not feel like you're working with epoch-based timestamps, it is important to understand that this is how DuckDB represents timestamps internally.
+-- %% MD | unnamed
+### TIMESTAMP
+-- %% MD | unnamed
+DuckDB's **TIMESTAMP** data type represents a specific point in time without consideration of time zone information.
+-- %% MD | unnamed
+A **TIMESTAMP** value is stored as an instant: the number of microseconds sinde the epoch. In order to process and render this epoch value in a useful way, DuckDB chunks it up into years, months, days, hours, minutes and seconds. To do this, DuckDB needs to know where this **binning** (chunking into years, months, hours, and so on) should be performed, relatively speaking.
+-- %% SQL_RAW | unnamed
+SELECT TIMESTAMP '1969-07-21 02:56:00' AS moonstep;
+-- %% MD | unnamed
+### TIMESTAMPTZ - Timestamps with time zones
+-- %% MD | unnamed
+**TIMESTAMPZ** type stores a specific point in time, but it also stores a time zone alongside this, which is used for binning epoch values. Refer to this DuckDB post on time zones (https://duckdb.org/2022/01/06/time-zones.html).
+-- %% SQL_RAW | unnamed
+SELECT TIMESTAMPTZ '1969-07-20 22:56:00-04' AS moonstep_z;
+-- %% MD | unnamed
+### Exploring timestamps with time zone functions
+-- %% SQL_RAW | unnamed
+SET timezone = 'UTC';
+
+CREATE OR REPLACE TABLE timestamp_demo (
+    col_ts TIMESTAMP, 
+    col_tstz TIMESTAMPTZ
+);
+-- %% SQL_RAW | unnamed
+INSERT INTO timestamp_demo (col_ts, col_tstz) VALUES('1969-07-21 02:56:00', '1969-07-21 02:56:00');
+-- %% SQL_RAW | unnamed
+SELECT current_setting('timezone') AS tz,
+    col_ts,
+    extract(epoch from col_ts) AS epoc_ts,
+    col_tstz,
+    extract(epoch from col_tstz) AS epoc_tstz
+FROM timestamp_demo;
+
+-- %% SQL_RAW | unnamed
+SET timezone = 'America/New_York';
+
+SELECT current_setting('timezone') AS tz,
+    col_ts,
+    extract(epoch from col_ts) AS epoc_ts,
+    col_tstz,
+    extract(epoch from col_tstz) AS epoc_tstz
+FROM timestamp_demo;
+-- %% MD | unnamed
+### Binning and functions using time zone functions
+-- %% SQL_RAW | unnamed
+SET timezone = 'America/New_York';
+
+SELECT current_setting('timezone') AS tz,
+    col_ts,
+    dayofmonth(col_ts) AS day_of_month_ts,
+    dayname(col_ts) AS day_name_ts,
+    col_tstz,
+    dayofmonth(col_tstz) AS day_of_month_tstz,
+    dayname(col_tstz) AS day_name_tstz
+FROM timestamp_demo;
+-- %% MD | unnamed
+## Time and window functions
+-- %% MD | unnamed
+### The Apollo 11 mission
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE apollo_events AS
+SELECT *
+FROM read_csv(
+    '/workspaces/Getting-Started-with-DuckDB/chapter_04/apollo.csv',
+    timestampformat='%d/%b/%Y %H:%M',
+    columns={
+        'event_time': 'TIMESTAMP', 
+        'astronaut': 'VARCHAR',
+        'event_description': 'VARCHAR',
+        'astronaut_location': 'VARCHAR'
+    }
+);
+-- %% SQL_RAW | unnamed
+FROM apollo_events
+WHERE astronaut = 'Neil Armstrong'
+ORDER BY event_time;
+-- %% MD | unnamed
+### Interval data
+-- %% MD | unnamed
+The **INTERVAL** data type provides a way of representing a duration of time in DuckDB. If we subtract a timestamp from another timestamp, we obtain an interval describing the differences between the timestamps.
+-- %% SQL_RAW | unnamed
+SELECT TIMESTAMP '1969-07-21 05:09:00' - TIMESTAMP '1969-07-21 02:56:00' as interval_on_moon;
+-- %% MD | unnamed
+### The LEAD and LAG window functions
+-- %% MD | unnamed
+The **LEAD** and **LAG** functions are window functions that allow you to access data from other rows in the same result set. We can use the **LEAD** function to compare values across rows to calculate the intervals between events.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE VIEW apollo_activities AS
+SELECT event_description, 
+    event_time, 
+    astronaut, 
+    astronaut_location, 
+    LEAD(event_time, 1) OVER(PARTITION BY astronaut ORDER BY event_time) AS end_time,
+    end_time - event_time AS event_duration
+FROM apollo_events;
+-- %% MD | unnamed
+The **OVER** clause defines how to partition and order the rows for the window function.
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM apollo_activities
+WHERE astronaut = 'Neil Armstrong'
+ORDER BY astronaut, event_time;
+-- %% SQL_RAW | unnamed
+SELECT *
+FROM apollo_activities
+WHERE astronaut_location = 'Moon'
+ORDER BY event_time;
+-- %% MD | unnamed
+The **LEAD** and **LAG** SQL functions are particularly useful in analyzing data over time in DuckDB. This single-pass approach allows us to aggregate complex datasets without the need for multiple queries using self-joins.

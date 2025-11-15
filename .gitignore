@@ -12,6 +12,7 @@
 
 # direnv
 .envrc
+.kaggle
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -180,6 +181,8 @@ chapter_02/bike_readings_april.csv
 chapter_02/bike_readings_april.json
 chapter_04/books_data.csv
 chapter_04/Books_rating.csv
+chapter_04/books_data.zip
+chapter_04/Books_rating.zip
 chapter_04/book_reviews.parquet
 chapter_04/tmp.tmp/*
 duckdb-book/*
@@ -188,4 +191,7 @@ chapter_02/__MACOSX/._74id-aqj9.csv
 chapter_02/archive_ORIG/74id-aqj9.csv
 chapter_02/bike_readings_april.tsv
 chapter_04/book_reviews_hive/*
-
+kaggle.json.local
+chapter_04/tmp.tmp/*
+temp.tmp/*
+chapter_04/book_reviews_hive/*
