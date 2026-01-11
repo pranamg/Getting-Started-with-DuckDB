@@ -8,11 +8,38 @@ output: html_document
 
 ## Technical requirements 
 
+# Instructions for setting up your environment
+-- instructions on installing R and the required packages --
+To use DuckDB with R, you'll first need to have R installed on your system. If you don't have R installed yet, you can download it from the Comprehensive R Archive Network (CRAN) at https://cran.r-project.org/.
+If you're using a Debian-based Linux distribution, you can install R using the following commands:
+```bash
+    sudo apt update && sudo apt install r-base
+```
+
+If you're using macOS, you can install R using Homebrew with the following command:
+```bash
+    brew install --cask r
+```
+
+If you're using Windows and have winget installed, you can install R by running the following command in an elevated command prompt:
+```powershell    
+    winget install R.Project.R
+```
+
+## Installing R dependencies
+
 In order to run the examples in this notebook, you'll need to install the R
 dependencies for this project. You can do this by running the following command
 in your R session.
 
+To activate your R environment and run:
+```bash
+    R
+```
+
+```{r}
     install.packages(c("duckdb", "tidyverse", "arrow")) 
+```
 
 For complete instructions on how to set up your environment for working through
 the examples, please consult the *Technical requirements* section of this
