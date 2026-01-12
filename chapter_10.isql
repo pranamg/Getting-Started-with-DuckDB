@@ -1,0 +1,319 @@
+-- %% MD | unnamed
+# Using DuckDB Effectively
+-- %% MD | unnamed
+In this chapter, you will learn about time-saving shortcuts that you can use when querying and adding data to a DuckDB database. You will also gain experience with some novel approaches to joining tables — with exercises that involve using positional and temporal joins.
+In this chapter, we're going to cover the following main topics:
+
+- Selecting columns effectively
+- Applying function chaining
+- Using INSERT effectively
+- Leveraging positional joins and temporal joins
+- Recursive queries and macros
+
+We will end this chapter by covering some tips and tricks for using DuckDB effectively.
+-- %% MD | unnamed
+## Technical requirements
+-- %% MD | unnamed
+The exercises in this chapter can be run via the DuckDB command-line interface (CLI). The files and example data for these exercises are available at https://github.com/PacktPublishing/Getting-Started-with-DuckDB/tree/main/chapter_10.
+-- %% SQL_RAW | unnamed
+mkdir -p /tmp/ducklab
+-- %% MD | unnamed
+## Selecting columns effectively
+-- %% MD | unnamed
+In this section, we are going to exp;lore some of the DuckDB niceties - little shortcuts and tweaks to make your use of DuckDB easier.
+-- %% MD | unnamed
+For the first set of exercises, we are going to take to the moutains with some ski-related data exercises. We will explore a variety of ways to nominate the columns for our queries, and learn how to replace values and mechanisms to exclude unwanted columns.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE skiers AS
+FROM './chapter_10/skiers.csv';
+-- %% SQL_RAW | unnamed
+FROM skiers;
+-- %% MD | unnamed
+A very common SQL shortcut is the **SELECT \*** syntax. Like in many databases, * is a SQL shortcut that's interpreted by DuckDB as a request to return all the columns.
+
+One small but very useful affordance of DuckDB is the use of a final trailing comma in a multi-column selection; this does not raise a syntax error. So, we can list all our columns with trailing commas, including the final **skier_bib_color**, column:
+-- %% SQL_RAW | unnamed
+SELECT skier_first_name,
+    skier_last_name,
+    skier_age,
+    skier_height,
+    skier_helmet_color,
+    skier_bib_color,
+FROM skiers;
+-- %% MD | unnamed
+Although seemingly minor, DuckDB 's tolerance for accepting trailing commas is a much-appreciated enhancement to conventional SQL syntax. We can rapidly copy and paste lines of SQL — and won't need to remove the final comma as we develop new queries. DuckDB has emphasized ease of use — and you certainly appreciate these niceties when you need to use other database systems.
+-- %% MD | unnamed
+Now, consider a situation where we wish to display all the columns apart from the age of the skier. A conventional SQL **SELECT** query displaying all the columns apart from the skiers'
+ages requires us to methodically list each column apart from the **age** column. We also need to ensure each column name is followed by a trailing comma — apart from the final column name.
+
+DuckDB can also explicitly omit columns with the **EXCLUDE** syntax. To ignore the skiers' ages and heights, we can simply specify these as columns to exclude:
+-- %% SQL_RAW | unnamed
+SELECT s.* EXCLUDE (skier_age, skier_height)
+FROM skiers AS s;
+-- %% MD | unnamed
+This is an efficient way to select all but a handful of columns. In our situation, we can display all the attributes of the skiers and simply exclude the fields that might be considered sensitive or personally identifiable.
+-- %% MD | unnamed
+DuckDB also has a syntax to apply changes columns in place with the **REPLACE** syntax. This is also useful when it's applied to a dynamic set of columns. For example, let's say we want to select all the columns of the **skiers** table, yet we wish to round the skiers' ages to the nearest 10 years and convert them into integers — that is, we wish to change both the value and data type:
+-- %% SQL_RAW | unnamed
+SELECT s.* 
+    REPLACE (round(skier_age / 10) * 10)::INTEGER AS skier_age
+FROM skiers AS s;
+-- %% MD | unnamed
+The preceding code will select all the columns, dynamically replacing the value of the skiers' ages. Here, we have replaced **skiers_age** with a calcualted value rounded to the nearest decade.
+-- %% MD | unnamed
+Let's introduce one additional DuckDB nicety — the **COLUMNS** selector. This allows us to use regular expressions when choosing column names. We can use the **COLUMNS** expression to return all column names that have a color attribute:
+-- %% SQL_RAW | unnamed
+SELECT skier_first_name, COLUMNS('.*color$')
+FROM skiers;
+-- %% MD | unnamed
+The regular expression within **COLUMNS('.*color$')** has matched the **skier_helmet_color** and **skier_bib_color** columns and returned the appropriate columns. The use of the **COLUMNS** filter is a powerful mechanism to dynamically select columns from a table or a view.
+-- %% MD | unnamed
+An interesting feature of the **COLUMNS** function is the ability to dynamically select columns to build a filter. We can create a **WHERE** clause that applies across multiple columns that match the search expression. For example, we can use the **COLUMNS** function to
+dynamically select the **color** columns and look for only the rows with a value of **yellow**. This will construct a **WHERE** predicate where all **color** columns must match the filter criteria:
+-- %% SQL_RAW | unnamed
+SELECT skier_first_name, COLUMNS('.*color.*')
+FROM skiers
+WHERE COLUMNS('.*color.*') = 'yellow';
+-- %% MD | unnamed
+The result of this query shows the matching skier, dressed completely in yellow:
+-- %% MD | unnamed
+This is equivalent to combining the candidate columns in a where
+clause, such as **skier_helmet_color='yellow'** AND **skier_bib_color='yellow'**. This is a powerful capability where you can apply the same predicate to a large collection of fields, without the need to list each one individually.
+-- %% MD | unnamed
+In this section, we learned how to work with multiple columns in DuckDB efficiently. You could produce the same result with vanilla SQL, but you need to write a lot more code. The use of **REPLACE, EXCLUDE,** and **COLUMNS** gives us an expressive syntax for working with multiple columns effectively.
+-- %% MD | unnamed
+## Applying function chaining
+-- %% MD | unnamed
+In this section, we'll introduce **function chaining**, an elegant programming style for calling multiple scalar functions sequentially. Function chaining (sometimes termed **method
+chaining**) is a familiar technique in object-orientated programming languages — and DuckDB supports this elegant style to increase the readability of code. This will be familiar to users of Python. So, let's learn how to use function chaining in DuckDB SQL.
+-- %% SQL_RAW | unnamed
+SELECT skier_first_name, skier_last_name
+FROM skiers;
+-- %% MD | unnamed
+Let's say we want to format the names of our skiers by performing
+the following steps:
+l. Concatenate **skier_first_name** and **skier-last_name** with a single space between the names by using the **CONCAT_WS** function.
+2. Convert the name into uppercase with the **UPPER** function.
+3. Left-pad the name string so that the entire name fills 20 characters, with the left gap filled with the > chevron, by using **LPAD**.
+4. Append a full stop (.) at the end of each name with the **CONCAT** function.
+-- %% SQL_RAW | unnamed
+SELECT CONCAT(
+  LPAD(
+    UPPER(
+      CONCAT_WS(' ', skier_first_name, skier_last_name))
+      , 20
+    , '>')
+  , '.') AS skier_name
+FROM skiers;
+-- %% MD | unnamed
+Each of the functions we're using here is a scalar function — meaning each returns a single value per invocation. Let's see how function chaining can make this same task a little more elegant. In DuckDB, we can pass the result from the first **CONCAT_WS** into the **UPPER** function by simply using a dot (.) between the function calls and continue doing so for the **LPAD** and **CONCAT** functions.
+
+An equivalent approach to formatting our skier names using function chaining is shown here:
+-- %% SQL_RAW | unnamed
+SELECT CONCAT_WS(' ', skier_first_name, skier_last_name)
+    .UPPER()
+    .LPAD(20, '>')
+    .CONCAT('.') AS skier_name
+FROM skiers;
+
+-- %% MD | unnamed
+Each scalar function is invoked sequentially, yielding the same result as before. DuckDB supports this same simplification for every scalar function. We use the dot (.) operator notation to chain any functions together.
+-- %% MD | unnamed
+## Using INSERT effectively
+-- %% MD | unnamed
+For this section, we will create an index on our skiers table to ensure each skier's name is unique:
+-- %% SQL_RAW | unnamed
+CREATE UNIQUE INDEX skier_unique ON skiers (skier_first_name);
+-- %% MD | unnamed
+With this index created, we can be assured that **skier_first_name** is a unique value.
+Imagine that we have a new skier called **Kim** who has a **blue** helmet. We can use the conventional **INSERT** syntax to list the columns and values:
+-- %% SQL_RAW | unnamed
+INSERT INTO skiers(skier_first_name, skier_helmet_color)
+SELECT 'Kim' AS skier_first_name, 'blue' AS skier_helmet_color;
+-- %% MD | unnamed
+DuckDB allows us to use the **BY NAME** directive to signify the names of the columns that should be used to match the destination table column names.
+-- %% SQL_RAW | unnamed
+INSERT INTO skiers BY NAME 
+SELECT 'green' AS skier_helmet_color, 
+    'red' AS skier_bib_color,
+    'Liam' AS skier_first_name;
+-- %% SQL_RAW | unnamed
+SELECT skier_first_name, skier_helmet_color, skier_bib_color, skier_last_name
+FROM skiers
+WHERE skier_first_name = 'Liam';
+-- %% MD | unnamed
+Before we leave this section, let's introduce another elegant feature of DuckDB when inserting data — **automated field updating**. Recall that there is a unique index on the **skiers** table to ensure that **skier_first_name** is distinctive. Our skier, Liam, has just arrived wearing a black colored helmet. We want to ensure we have captured the helmet's color correctly in the **skiers** table.
+-- %% SQL_RAW | unnamed
+INSERT OR REPLACE 
+INTO skiers BY NAME 
+SELECT 'Liam' AS skier_first_name, 'black' AS skier_helmet_color;
+-- %% MD | unnamed
+Error: Binder Error: Values list "excluded" does not have a column named "skier_last_name"
+	at DucklabSQLController._doExecution (/home/codespace/.vscode-remote/extensions/ducklake.ducklab-0.5.0-linux-x64/out/index.js:20148:64)
+-- %% SQL_RAW | unnamed
+SELECT skier_first_name, 
+    skier_helmet_color, 
+    skier_bib_color
+FROM skiers
+WHERE skier_first_name = 'Liam';
+-- %% MD | unnamed
+It is worth noting that Liam's is **skier_helmet_color** is **black**, and the **skier_bib_color** column (which was not in the **INSERT OR REPLACE** statement) remains in place with a value of **red**. **INSERT OR REPLACE** is a neat shortcut that provides a shorter SQL syntax than the alternative of writing a **MERGE** or **ON CONFLICT DO UPDATE** command.
+-- %% MD | unnamed
+## Leveraging positional joins
+-- %% MD | unnamed
+Relational tables in databases are traditionally considered unordered. SQL uses the **ORDER BY** clause to specify the ordering when data is retrieved. However, much of the data we process from other systems has an implicit order. There may be a natural ordering with a log file (with newer records appended to the end of the file) and files on disk, such as Parquet or CSV, can have a natural ordering of the file rows. It can be frustrating (and somewhat perplexing) to users of dataframes who are used to structures that preserve their rows to discover that relational tables are unordered.
+
+DuckDB has the very useful **POSITIONAL** join, which acknowledges the implicit row numbers in each external table. This positional matching characteristic is frequently used by pandas dataframes when joining on the ordinal positioning of rows.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE skiers AS
+FROM './chapter_10/skiers.csv';
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE scores AS
+FROM './chapter_10/skier_scores.csv';
+-- %% MD | unnamed
+In many traditional relational database systems, the two tables would be considered unordered, and we would need to introduce another element to match the skiers to their scores. However, DuckDB can implicitly use the tables as two dataframes, connecting them using their ordering with **POSITIONAL JOIN**:
+-- %% SQL_RAW | unnamed
+SELECT df1.skier_first_name, df1.skier_last_name, df2.score 
+FROM skiers AS df1 POSITIONAL JOIN scores AS df2;
+-- %% MD | unnamed
+The result of POSITIONAL JOIN gives us a query result that matches the skier to the correct score.
+-- %% MD | unnamed
+## Using temporal joins with ASOF
+-- %% MD | unnamed
+Joining tables usually involves linking a common attribute across a table, such as finding the same identifier, name, or code value. DuckDB can also support "fuzzy" joins when we wish to join on values that may be close (but not identical) across tables. This is especially tme when it comes to "temporal joins" — or joins that match on moments in time.
+
+In this section, we will be discussing temporal joins and introducing the **ASOF** join, which can simplify joins across time.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE weather AS
+FROM read_csv('./chapter_10/weather.csv', timestampformat='%Y-%m-%d %H:%M:%S');
+-- %% SQL_RAW | unnamed
+FROM weather
+LIMIT 10;
+-- %% MD | unnamed
+Here, we have a measurement_time field that specifies the timestamp where a windspeed and temperature measurement has been taken.
+
+If we had a skier on the mountain who got judged for their ski run at **2023-12-01 10:01**, we can't know the precise weather then as we don't have a measurement at that exact moment in time.
+
+As we only have hourly measurements for the weather, we might want to find the most recent measurement for wind and temperature at the time the skier was on the mountain. We can construct a query like this to find the most recent weather measurement for the time of the ski run:
+-- %% SQL_RAW | unnamed
+WITH weather_cte AS (
+  SELECT measurement_time, 
+  wind_speed, 
+  temp,
+  LEAD(measurement_time, 1) 
+      OVER (ORDER BY measurement_time) AS measurement_end
+  FROM weather
+  ORDER BY measurement_time
+)
+FROM weather_cte
+WHERE TIMESTAMP '2023-12-01 10:01:00' 
+    BETWEEN measurement_time AND measurement_end;
+-- %% MD | unnamed
+Quite a bit is going on in this query, so let's break it down. A **common table expression (CTE)** selects data from the **weather** table, calculating the next **measurement_time** using the **LEAD** function, ordered by **measurement_time**. We find the weather at the **2023-12-01 10:01** timestamp by filtering in the row that falls between the measurement time and measurement end columns:
+-- %% MD | unnamed
+We get the weather data from the most recent measurement at the moment the skier took to the ski run.
+
+This is all getting messy — and gets progressively more complicated when we wish to use this logic to find the most recent weather measurement for each of our skiers. So, let's use DuckDB's **ASOF** joins to join on nearby time values:
+-- %% SQL_RAW | unnamed
+FROM scores AS s ASOF JOIN weather AS w
+ON s.score_time >= w.measurement_time;
+-- %% MD | unnamed
+**ASOF JOIN** matches the closest (or most recent) value in the **weather** table to each row in the **scores** table based on a **score_time** value that is greater than or equal to **measurement_time** in the **weather** table.
+
+This is pretty neat — we have quickly found the weather conditions that each of our skiers faced during their ski run. The **ASOF** join condition is an elegant way of finding the value of an attribute that's relevant at a specific point in time.
+
+Before we leave this section, let's introduce a very simple visualization that's available in DuckDB to help us appreciate our data.
+
+The DuckDB **bar** function draws a simple graphical bar where the width is proportional to the value within a given range between a specified minimum and maximum value. This will help us see the times when skiers face a very high wind:
+-- %% SQL_RAW | unnamed
+SELECT s.*, 
+    bar(w.wind_speed, 0, 20, 20) AS wind_bar_plot,
+    w.wind_speed
+FROM scores AS s ASOF JOIN weather AS w
+ON s.score_time >= w.measurement_time;
+-- %% MD | unnamed
+## Recursive queries and macros
+-- %% MD | unnamed
+DuckDB supports recursive queries, which are useful for working with hierarchical data, such as organizational charts, product categories, and family trees.
+-- %% MD | unnamed
+### Wine classification hierarchy
+-- %% MD | unnamed
+Let's start with a table of wine with the association between the wine variety hierarchy expressed as a subclass column:
+
+#### French Wine
+##### Red
+- **Red Bordeaux**
+  - Latour
+  - Rothschild
+
+#### White
+- **White Bordeaux**
+  - Mission Haut Blanc
+  - Haut Brion Blanc
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE wines AS
+FROM './chapter_10/wines.csv';
+-- %% SQL_RAW | unnamed
+FROM wines
+ORDER BY wine_id;
+-- %% MD | unnamed
+If we look at the **Rothschild** wine, we'll see that it is a subclass of **wine_id 7**, the **Red Bordeaux** classification. In turn, **Red Bordeaux** is a subclass of **wine_id 2**, **Red**, which is a subclass of **wine_id 1**, **French wine**.
+-- %% MD | unnamed
+We can describe this as a hierarchical relationship, where Rothschild -> Red Bordeaux -> Red -> French wine.
+
+This style of hierarchical traversal is well suited to solving problems using a recursive solution. A recursive pattern is a function that calls upon itself, breaking a large problem down into smaller parts. DuckDB can solve this style of nested problem by using a recursive CTE. By using this pattern, we will be able to define a recursive CTE query that can produce our target result set by recursing over our hierarchical relationships. A recursive CTE
+consists of two parts: a **base case** and a **recursive case**. The base case defines the initial result set, which serves as the starting point for the recursion. The recursive case defines how to join the CTE to the result of the subsequent invocation. Subsequent applications of the returned case generate new rows until a termination condition is met, which is the point where the recursive case returns no additional rows.
+
+We will be using a recursive CTE to walk through a hierarchy, but it's worth noting that they allow for all manner of powerful data traversal. Some other applications that recursive CTEs can be used for are finding routes between cities, evaluating network conditions, or parsing elaborate paths between nested data.
+
+Let's create a recursive query' so that we can navigate our wine collection:
+-- %% SQL_RAW | unnamed
+WITH RECURSIVE wine_hierarchy(wine_id, start_with, wine_path) AS (
+  SELECT wine_id, wine_name, [wine_name] AS wine_path
+  FROM wines
+  WHERE sub_class_of IS NULL
+  UNION ALL
+  SELECT wines.wine_id,
+      wines.wine_name,
+      list_prepend(wines.wine_name, wine_hierarchy.wine_path)
+  FROM wines, wine_hierarchy
+  WHERE wines.sub_class_of = wine_hierarchy.wine_id
+)
+SELECT wine_path
+FROM wine_hierarchy
+WHERE start_with = 'Rothschild';
+-- %% MD | unnamed
+We started with the **Rothschild** wine, found its ancestor, **Red Bordeaux**, and traversed up the wine hierarch to **Red**, followed by the parent class,** French wine**.
+
+DuckDB's support for recursive queries allows us to traverse the data stored in a hierarchy format efficiently. Here, we have only scratched the surface of what's possible with recursive SQL queries. If you are interested in a deeper understanding of the theory and applications of recursive SQL, there are some great online resources, such as https://builtin.com/data-science/recursive-sql.
+-- %% MD | unnamed
+### Macros
+-- %% MD | unnamed
+A DuckDB macro can be used to describe a helper routine, which can simplify code if we wish to encapsulate a shared calculation. A scaler macro can be used in a query, and it allows parameters to be passed into a calculation.
+
+Let's see how a macro can be created to calculate the unit cost of wines:
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE MACRO unit_price(price, capacity) 
+    AS round(price / capacity, 3);
+-- %% MD | unnamed
+The calculation for our **unit_price** macro simply takes the price of the wine (in USD) and divides it by the capacity (in milliliters). The cost per unit is returned and rounded to three decimal places.
+-- %% SQL_RAW | unnamed
+CREATE OR REPLACE TABLE wine_prices AS
+FROM './chapter_10/wine_prices.csv';
+-- %% SQL_RAW | unnamed
+SELECT wine_name, price, capacity_ml
+FROM wine_prices;
+-- %% SQL_RAW | unnamed
+SELECT wine_name, 
+    price,
+    capacity_ml,
+    unit_price(price, capacity_ml) AS price_ml
+FROM wine_prices;
+-- %% MD | unnamed
+The calculation for unit_price has been applied to each column. Macros can be considered a useful mechanism for encapsulation logic that can be shared.
+-- %% MD | unnamed
+## Summary
+-- %% MD | unnamed
+This chapter has offered a range of tips for effective DuckDB usage. Here, we shared time-saving shortcuts for querying and adding data to a DuckDB database. We also introduced various approaches to joining tables, including positional and temporal joins, which provide interesting opportunities for analysis with DuckDB. We also learned how to use recursive queries and macros to handle hierarchical data structures.
+
+As you continue your journey with DuckDB, we encourage you to explore further and experiment with the effective features and functionalities enhancements being added to the project.
